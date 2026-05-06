@@ -1,0 +1,77 @@
+# bench/manifests/_example-full.yaml — 전체 매니페스트 예시 (2 슬롯, hypotheses 포함)
+#
+# 사용 의도: 16 core fields + optional bench_stack 시연 + slots[].scenario_mode override + hypotheses 가설 절.
+# duration mode 사용 — N = floor((duration_s - warmup_s) / (per_run_s + cooldown_s))
+#   N = floor((10m - 30s) / (1m + 15s)) = floor(570/75) = 7 iter
+#
+# scenario_mode override:
+#   - baseline=SECTION_B (B 안 — PATCH /booking/seat/section)
+#   - candidate=SECTION_A (A 안 — SSE close + 새 ?section=N 재연결)
+# 두 슬롯은 *번갈아 측정* (Lock #3 alternating only). 동시 부하 X — iter 1=baseline, iter 2=candidate, iter 3=baseline ...
+# get_slot_for_iter (run.sh) 가 slot 선택을 결정.
+#
+# hypotheses:
+#   - H1: candidate 의 SSE 좌석 점유 충돌이 baseline 보다 5% 이상 적음
+#   - H2: candidate 의 재연결 비용으로 latency 가 10% 이상 증가하지 않음
+#
+# 출처:
+#   areas/00-contracts/schema.yaml § 16 core fields + optional bench_stack (yaml 형태 참조)
+#   areas/04-gatling-integration/README.md § -P 키 표 (scenario_mode 6 enum)
+#   areas/00-contracts/README.md § Manifest Schema (단일 진실)
+#
+# Lock #3 (alternating only): slots[] = 2, 두 슬롯 *번갈아* 측정 — concurrent dual 미지원.
+# Lock #4 (region 단일 진실): regions 는 plan_path 가 가리키는 Plan.json 의 stats.regions 가 원천.
+
+manifest_id:    "example-full"
+run_id_prefix:  "example-full"
+
+# iterations XOR duration — 본 예시는 duration mode (iterations 미정의)
+duration:       "10m"
+
+warmup:         "30s"
+per_run:        "1m"
+cooldown:       "15s"
+
+max_failures:   2
+
+plan_path:      "app/src/gatling/resources/Plan.json"
+
+prom_url:       "http://192.168.138.2:9090"
+prom_step:      "15s"
+
+reset_path:     "/booking/init/:eventId"
+event_ids:
+  - 1
+  - 2
+
+queries:
+  - name:    "http_request_rate"
+    promql:  "rate(http_server_requests_seconds_count[1m])"
+    unit:    "req/s"
+  - name:    "redis_seat_conflict"
+    promql:  "increase(seat_conflict_total[1m])"
+    unit:    "count/min"
+  - name:    "p99_latency_ms"
+    promql:  "histogram_quantile(0.99, rate(http_server_requests_seconds_bucket[1m])) * 1000"
+    unit:    "ms"
+
+# Lock #3 alternating: slots[] = 2 (≤2). 두 슬롯 *동시* 부하 금지, *번갈아* 측정.
+slots:
+  - name:           "baseline"
+    targetUrl:      "http://192.168.138.2:8080"
+    image_tag:      "nest:example-full-baseline"
+    scenario_mode:  "SECTION_B"   # B 안 — PATCH /booking/seat/section
+  - name:           "candidate"
+    targetUrl:      "http://192.168.138.2:8081"
+    image_tag:      "nest:example-full-candidate"
+    scenario_mode:  "SECTION_A"   # A 안 — SSE close + 새 ?section=N 재연결
+
+hypotheses:
+  - id:        "H1"
+    metric:    "redis_seat_conflict"
+    compare:   "candidate < baseline * 0.95"
+    rationale: "A 안(SSE 재연결)이 B 안보다 좌석 점유 충돌이 5% 이상 적다"
+  - id:        "H2"
+    metric:    "p99_latency_ms"
+    compare:   "candidate <= baseline * 1.10"
+    rationale: "A 안의 재연결 비용으로 latency 가 10% 이상 증가하지 않는다"

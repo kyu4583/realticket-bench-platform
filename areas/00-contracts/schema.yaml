@@ -1,0 +1,97 @@
+# areas/00-contracts/schema.yaml — 매니페스트 schema 명세 (16 core fields + optional bench_stack + slots[].scenario_mode override)
+#
+# 단일 진실 출처:
+#   areas/00-contracts/README.md § Manifest Schema
+#   본 파일은 위 표의 *재진술 X · 인용 O* (yaml 형태 placeholder).
+#   16 core fields + optional bench_stack enumeration · 타입 · required · 의미는 위 문서가 단일 진실,
+#   본 schema.yaml 은 *yaml 기계 가독 형태* 를 제공할 뿐.
+#
+# 16 core fields + optional object (bench_stack):
+#   1.  manifest_id      string  ✓  매니페스트 식별자 (run_id slug 1차 입력)
+#   2.  run_id_prefix    string  ✓  run_id 생성 시 prefix
+#   3.  iterations       int     ◐  반복 회차 N. duration 과 상호 배타 (XOR)
+#   4.  duration         dur     ◐  총 실행 시간. N = floor((duration-warmup)/(per_run+cooldown))
+#   5.  warmup           dur     ✓  슬롯 ready 대기 시간
+#   6.  per_run          dur     ✓  1 iteration 부하 시간
+#   7.  cooldown         dur     ✓  iteration 종료 후 다음 시작까지
+#   8.  max_failures     int     ✓  누적 실패 ≥ → run 중단 (FAILED 마커)
+#   9.  plan_path        path    ✓  PlanGenerator 출력 JSON 경로 (regions 는 Plan.json 에만, Lock #4)
+#  10.  prom_url         URL     ✓  Prometheus base URL
+#  11.  prom_step        dur     ✓  query_range step (예: 15s)
+#  12.  reset_path       URL     ✓  BE reset endpoint path (`/booking/init/:eventId`)
+#  13.  event_ids        int[]   ✓  reset 호출할 eventId 배열
+#  14.  queries          obj[]   ✓  {name, promql, unit} — summarize 대상 PromQL
+#  15.  slots            obj[]   ✓  {name, targetUrl, image_tag, scenario_mode?} — 최대 2 슬롯 (Lock #3)
+#  16.  hypotheses       obj[]   ✗  가설 절 (선택). 미존재 시 SUMMARY.md 가설 섹션 미생성
+#
+# Optional object (16 표준 필드 외 선택 객체):
+#   +.  bench_stack      obj     ✗  4 기능 토글 (alpha_test_account / beta_dual_slots / gamma_sentinel / delta_autoscaler).
+#                                   미존재 시 모두 false — base.yml 단독 deploy
+#
+# scenario_mode 6 enum (Config.java default = LOGIN_ONLY, 04-gatling-integration/contract.md 라인 13):
+#   DYNAMIC | STATIC | PARALLEL | LOGIN_ONLY | SECTION_A | SECTION_B
+#
+# iterations·duration 상호 배타 (XOR — run.sh main 검증):
+#   - 둘 다 정의 → die "iterations and duration are mutually exclusive"
+#   - 둘 다 부재 → die "iterations or duration required"
+#
+# Lock 인용:
+#   - Lock #3 (alternating only): slots[] ≤ 2. 두 슬롯 동시 부하 금지. iteration 이 슬롯을 번갈아 선택.
+#   - Lock #4 (region 단일 진실): regions 는 plan_path 가 가리키는 Plan.json 의 stats.regions 가 원천.
+#                                  매니페스트는 regions 를 override 하지 않는다.
+#
+# 다음은 schema placeholder — 실제 매니페스트는 _example-min.yaml / _example-full.yaml 참조.
+
+manifest_id:    "<string>"
+run_id_prefix:  "<string>"
+
+# iterations XOR duration (둘 중 하나만 — 상호 배타)
+iterations:     0
+# duration:     "<6h|10m>"
+
+warmup:         "<duration>"
+per_run:        "<duration>"
+cooldown:       "<duration>"
+
+max_failures:   0
+
+plan_path:      "<path-to-Plan.json>"
+
+prom_url:       "http://192.168.138.2:9090"
+prom_step:      "15s"
+
+reset_path:     "/booking/init/:eventId"
+event_ids:
+  - 0
+
+queries:
+  - name:    "<query_name>"
+    promql:  "<promql_expression>"
+    unit:    "<unit>"
+
+slots:
+  - name:           "baseline"
+    targetUrl:      "http://192.168.138.2:8080"
+    image_tag:      "nest:<manifest_id>"
+    scenario_mode:  "LOGIN_ONLY"  # override. 미정의 시 Config.java default LOGIN_ONLY.
+  # - name:           "candidate"
+  #   targetUrl:      "http://192.168.138.2:8081"
+  #   image_tag:      "nest:<manifest_id>-candidate"
+  #   scenario_mode:  "SECTION_A"
+
+# hypotheses (선택 — 미존재 시 SUMMARY.md 가설 섹션 미생성)
+# hypotheses:
+#   - id:        "H1"
+#     metric:    "<query_name>"
+#     compare:   "candidate < baseline * 0.95"
+#     rationale: "<설명>"
+
+# bench_stack (object, optional, default = 모두 false)
+# 4 기능 토글 fragment 시스템의 매니페스트 입력.
+# areas/02-orchestration/templates/dimensions/{alpha-test-account, beta-dual-slots, gamma-sentinel, delta-autoscaler}.patch.yml 활성화 조건.
+# Claude 가 매니페스트 작성 시 측정 의도가 토글 활성을 명시 요구하지 않으면 disabled (areas/02-orchestration/templates/README.md § 매니페스트 작성 운영 정책 참조).
+bench_stack:
+  alpha_test_account: false   # α — true 시 redis-master.image 가 redis-test-account:latest 로 leaf override
+  beta_dual_slots:    false   # β — true 시 nest-candidate 신규 service 추가 (포트 8081)
+  gamma_sentinel:     false   # γ — true 시 redis-replica + redis-sentinel-1/2/3 추가 + nest-baseline.environment.REDIS_SENTINEL_MODE override
+  delta_autoscaler:   false   # δ — true 시 autoscaler 신규 service 추가
