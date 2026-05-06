@@ -1,0 +1,5 @@
+# bench/analyze/requirements.txt — 간결성·가독성 우선, stdlib 가능하지만 PyYAML 채택
+# 부트스트랩: python -m venv .venv && .venv/Scripts/activate && pip install -r requirements.txt
+# ~=6.0 으로 상한 고정 + requests 는 현재 미사용 의존성이므로 제외.
+# m2+ 에서 Python 직접 HTTP 호출 도입 시 requests 재추가 (현재는 bash curl 이 담당).
+PyYAML~=6.0

@@ -1,0 +1,4 @@
+{"region": "booking", "request_name": "ì¢ì ì ì ", "status": "OK", "response_time_ms": 42.0, "timestamp_epoch": 1777663801, "source": "html_stats"}
+{"region": "booking", "request_name": "ì¢ì ì ì ", "status": "OK", "response_time_ms": 80.0, "timestamp_epoch": 1777663801, "source": "html_stats"}
+{"region": "booking", "request_name": "ê²°ì  ì§í", "status": "OK", "response_time_ms": 150.0, "timestamp_epoch": 1777663802, "source": "html_stats"}
+{"region": "booking", "request_name": "ê²°ì  ì§í", "status": "KO", "response_time_ms": 200.0, "timestamp_epoch": 1777663802, "source": "html_stats"}
