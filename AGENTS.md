@@ -12,21 +12,21 @@
 | 01 | `planning` | `areas/01-planning/README.md` | 매니페스트 작성 · scenario 설계 · 가설 절 |
 | 02 | `orchestration` | `areas/02-orchestration/README.md` | run.sh · fire-and-forget · 마커 · **이미지 swap·stack restart(VM 변동)** |
 | 03 | `analysis` | `areas/03-analysis/README.md` | parse · prom_query · summarize · cross product 표 |
-| 04 | `gatling-integration` | `areas/04-gatling-integration/README.md` | gatling repo 계약+풀가이드. Tracking: gatling `main` @ `22cfbab` |
-| 05 | `realticket-integration` | `areas/05-realticket-integration/README.md` | RealTicket repo 계약+풀가이드. Tracking: realticket `dev` @ `dc8784b` + m2 dic hand-off slot |
+| 04 | `gatling-integration` | `areas/04-gatling-integration/README.md` | gatling repo 계약+풀가이드. Tracking: gatling `main` 동적 확인 |
+| 05 | `realticket-integration` | `areas/05-realticket-integration/README.md` | RealTicket repo 계약+풀가이드. Tracking: realticket `dev` 동적 확인 + m2 dic hand-off slot |
 | 06 | `vm-environment` | `areas/06-vm-environment/README.md` | **고정 인프라만** (Swarm·Sentinel·Prom/Grafana·SSH/키). 변동은 02 책임 |
 | root | (root README) | `areas/README.md` | 7 영역 메타 진입 가이드 (v1.0 ENTRY.md 계승) |
 
-### 04 / 05 — Tracking lockfile 패턴 (drift detection)
+### 04 / 05 — 동적 Tracking 패턴
 
-`areas/04-gatling-integration/README.md`·`areas/05-realticket-integration/README.md` **첫 줄에 Tracking 1줄**:
+`areas/04-gatling-integration/README.md`·`areas/05-realticket-integration/README.md` **첫 줄에 Tracking 1줄** (고정 해시 없음 — 동적 확인):
 
 ```
-> Tracking: gatling repo `main` @ commit 22cfbab (synced 2026-05-02)
-> Tracking: realticket repo `dev` @ commit dc8784b (synced 2026-05-01)
+> Tracking: gatling repo `main` — 동적 확인: `git -C <gatling-repo> log origin/main -1 --format="%h %ad %s" --date=short`
+> Tracking: realticket repo `dev` — 동적 확인: `git -C <realticket-repo> log origin/dev -1 --format="%h %ad %s" --date=short`
 ```
 
-운영: 가이드 갱신 시 사람이 commit + 날짜 직접 bump. drift 의심 시 `git -C <repo> log <tracked>..origin/<branch> --oneline`. **자동 hook·script·티어드 워크플로우는 없음** (필요 시 m2+).
+운영: 고정 해시 추적 없음. 최신 커밋 확인 시 위 git 명령을 직접 실행해 현재 HEAD를 동적으로 파악한다. drift 의심 시 같은 명령으로 현재 상태 확인. **자동 hook·script·티어드 워크플로우는 없음** (필요 시 m2+).
 
 `areas/04-gatling-integration/README.md`·`areas/05-realticket-integration/README.md`는 본 repo가 의존하는 *인터페이스 표 + 풀가이드* (모듈 지도·변경 원칙·과거 함정 흡수).
 

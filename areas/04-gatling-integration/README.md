@@ -1,6 +1,6 @@
 # 04-gatling-integration — Gatling repo 인터페이스 · 브랜치 격리
 
-> Tracking: gatling repo `main` @ commit 22cfbab (synced 2026-05-02)
+> Tracking: gatling repo `main` — 동적 확인: `git -C <gatling-repo> log origin/main -1 --format="%h %ad %s" --date=short`
 
 본 영역은 외부 Gatling repo(별도 git)와 본 repo 사이의 계약을 lock한다. 본 파일은 모듈 지도·변경 원칙·과거 함정·브랜치 격리를 다룬다.
 
@@ -14,8 +14,8 @@
 ../gatling-practice/realticket-gatling-simulations
 ```
 
-- branch: `main` (Tracking @ `22cfbab`)
-- drift 점검: `git -C ../gatling-practice/realticket-gatling-simulations log 22cfbab..origin/main --oneline`
+- branch: `main` (동적 확인)
+- drift 점검: `git -C ../gatling-practice/realticket-gatling-simulations log origin/main -1 --format="%h %ad %s" --date=short`
 
 ---
 
@@ -122,10 +122,10 @@ region 모델 정의는 [00-contracts/README.md](../00-contracts/README.md) § R
 **매니페스트 종료 시:**
 - `git checkout main` 복귀 + 브랜치 삭제 금지
 
-### Tracking bump 시점
+### Tracking 갱신 시점
 
-- gatling main HEAD가 `22cfbab`에서 이동한 경우 본 파일 첫 줄 Tracking 1줄에서 hash + 날짜 bump
-- 변경된 -P 키/스키마/클래스 표에 반영
+- gatling main에 변경이 생긴 경우 변경된 -P 키/스키마/클래스 표에 반영
+- 최신 커밋은 `git -C <gatling-repo> log origin/main -1 --format="%h %ad %s" --date=short` 로 동적 확인
 
 ### 행동 금지
 

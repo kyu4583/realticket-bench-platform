@@ -1,6 +1,6 @@
 # 05-realticket-integration — RealTicket repo 계약 · 브랜치 격리
 
-> Tracking: realticket repo `dev` @ commit dc8784b (synced 2026-05-01)
+> Tracking: realticket repo `dev` — 동적 확인: `git -C <realticket-repo> log origin/dev -1 --format="%h %ad %s" --date=short`
 
 본 영역은 RealTicket repo와 본 repo 사이의 계약·풀가이드를 lock한다. BE 코드 변경 0 (Lock #2). 외부 RealTicket repo 자체 README/CLAUDE.md는 수정하지 않는다 — bench는 해석/원칙만.
 
@@ -12,8 +12,8 @@
 C:\Users\kxu45\ProgramStudy\naver-boostcamp-membership\GroupProject\web04-RealTicket
 ```
 
-- branch: `dev` (Tracking @ `dc8784b`)
-- drift 점검: `git -C <repo> log dc8784b..origin/dev --oneline`
+- branch: `dev` (동적 확인)
+- drift 점검: `git -C <repo> log origin/dev -1 --format="%h %ad %s" --date=short`
 
 ---
 
@@ -134,7 +134,7 @@ RealTicket repo의 신규 폴더 `bench-stack/`은 본 repo가 책임지는 영�
 
 ## Tracking bump 시점
 
-RealTicket dev HEAD가 `dc8784b`에서 이동한 경우 본 파일 첫 줄 Tracking 1줄에서 hash + 날짜 bump.
+RealTicket dev에 변경이 생긴 경우 아래 명령으로 최신 커밋을 동적 확인한다: `git -C <repo> log origin/dev -1 --format="%h %ad %s" --date=short`
 
 변경 영향:
 - **BE Endpoint 시그니처 변경** → 본 파일 § BE Endpoint 시그니처 표 갱신 + `areas/02-orchestration/lib/lifecycle.sh` `reset_slots` 재검토
