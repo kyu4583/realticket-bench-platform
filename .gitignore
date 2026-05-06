@@ -1,0 +1,33 @@
+# GSD planning docs (local only — commit_docs: false)
+.planning/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# bench artifacts
+bench/results/
+
+# local environment and temporary repair scripts
+areas/06-vm-environment/.env
+areas/06-vm-environment/.env.vm
+.tmp-*.py
+
+# 02-orchestration 템플릿 작업 디렉토리
+areas/02-orchestration/templates/.scratch/*
+!areas/02-orchestration/templates/.scratch/.gitkeep
+!areas/02-orchestration/templates/.scratch/verify-dimensions.sh

@@ -1,0 +1,9 @@
+# 전역 line-ending 설정 (bench/.gitattributes 에서 상위로 이동)
+areas/**/*.sh text eol=lf
+areas/**/*.py text eol=lf
+areas/**/*.yml text eol=lf
+areas/**/*.yaml text eol=lf
+bench/**/*.sh text eol=lf
+bench/**/*.py text eol=lf
+bench/**/*.yml text eol=lf
+bench/**/*.yaml text eol=lf
