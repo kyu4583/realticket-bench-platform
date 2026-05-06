@@ -1,0 +1,83 @@
+# areas/02-orchestration/templates/dimensions/gamma-sentinel.patch.yml
+# 활성 조건: bench_stack.gamma_sentinel: true
+# 의미: Redis Sentinel 활성 — base 의 단일 redis-master 에 replica + sentinel*3 추가
+# Pure additive: services.redis-replica + services.redis-sentinel-{1,2,3} 4 service 추가
+#                       + services.nest-baseline.environment.REDIS_SENTINEL_MODE leaf override (false → true)
+#                       + services.nest-baseline.depends_on 에 sentinel-* 3개만 listed
+#                         (yq `*+` array concat 동작 — base 의 [mysql, redis-master] 와 자연 결합해
+#                          최종 [mysql, redis-master, sentinel-1, -2, -3] 5 element 결과. 중복 0건.
+#                          [Rule 1 fix 2026-05-04] plan 본문의 "array replace" 가정은 yq `*+` 실측에서
+#                          concat 으로 정정 → γ 는 추가분만 listed 함이 정합).
+# redis-replica/sentinel 의 entrypoint 는 RealTicket repo 의 redis/replica-entrypoint.sh / sentinel-entrypoint.sh
+#   bind mount. 두 파일은 dev 브랜치 미추적 — γ=true 매니페스트는 schema 의 untracked_overrides[] 필수.
+#
+services:
+  nest-baseline:
+    environment:
+      REDIS_SENTINEL_MODE: "true"
+    depends_on:
+      - redis-sentinel-1
+      - redis-sentinel-2
+      - redis-sentinel-3
+  redis-replica:
+    image: redis:7-alpine
+    entrypoint: ["/entrypoint.sh"]
+    volumes:
+      - type: bind
+        source: ./redis/replica-entrypoint.sh
+        target: /entrypoint.sh
+    deploy:
+      replicas: 1
+      labels:
+        com.docker.stack.namespace: app
+    networks:
+      - realticket
+    depends_on:
+      - redis-master
+  redis-sentinel-1:
+    image: redis:7-alpine
+    entrypoint: ["/entrypoint.sh"]
+    volumes:
+      - type: bind
+        source: ./redis/sentinel-entrypoint.sh
+        target: /entrypoint.sh
+    deploy:
+      replicas: 1
+      labels:
+        com.docker.stack.namespace: app
+    ports:
+      - "26379:26379"
+    networks:
+      - realticket
+    depends_on:
+      - redis-master
+  redis-sentinel-2:
+    image: redis:7-alpine
+    entrypoint: ["/entrypoint.sh"]
+    volumes:
+      - type: bind
+        source: ./redis/sentinel-entrypoint.sh
+        target: /entrypoint.sh
+    deploy:
+      replicas: 1
+      labels:
+        com.docker.stack.namespace: app
+    networks:
+      - realticket
+    depends_on:
+      - redis-master
+  redis-sentinel-3:
+    image: redis:7-alpine
+    entrypoint: ["/entrypoint.sh"]
+    volumes:
+      - type: bind
+        source: ./redis/sentinel-entrypoint.sh
+        target: /entrypoint.sh
+    deploy:
+      replicas: 1
+      labels:
+        com.docker.stack.namespace: app
+    networks:
+      - realticket
+    depends_on:
+      - redis-master

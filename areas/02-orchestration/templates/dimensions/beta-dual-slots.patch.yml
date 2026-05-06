@@ -1,0 +1,47 @@
+# areas/02-orchestration/templates/dimensions/beta-dual-slots.patch.yml
+# 활성 조건: bench_stack.beta_dual_slots: true
+# 의미: nest 슬롯 1 → 2 (nest-baseline + nest-candidate)
+# Pure additive: services.nest-candidate 신규 service 추가만. β 는 nest 만 (redis 무관).
+# nest 빌드 = back/Dockerfile.dev-in-local (base 의 nest-baseline 과 동일).
+#
+services:
+  nest-candidate:
+    build:
+      context: ./back
+      dockerfile: Dockerfile.dev-in-local
+    image: nest:CANDIDATE_IMAGE_PLACEHOLDER
+    ports:
+      - "8081:8080"
+    environment:
+      DATABASE_TYPE: "mysql"
+      DATABASE_HOST: "mysql"
+      DATABASE_PORT: "3306"
+      DATABASE_USERNAME: "root"
+      DATABASE_PASSWORD: "${VM_REALTICKET_MYSQL_ROOT_PASSWORD}"
+      DATABASE_SCHEMA: "real_ticket"
+      DATABASE_SYNCHRONIZE: "false"
+      REDIS_HOST: "redis-master"
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      REDIS_SENTINEL_MODE: "false"
+      APP_VERSION: "candidate"
+    deploy:
+      replicas: 1
+      labels:
+        com.docker.stack.namespace: app
+        version: "candidate"
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - mysql
+      - redis-master
+    networks:
+      - realticket

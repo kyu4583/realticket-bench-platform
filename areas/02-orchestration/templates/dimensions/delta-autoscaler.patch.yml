@@ -1,0 +1,35 @@
+# areas/02-orchestration/templates/dimensions/delta-autoscaler.patch.yml
+# 활성 조건: bench_stack.delta_autoscaler: true
+# 의미: autoscaler 서비스 활성. base 에 정의 0건 — 본 patch 가 신규 추가.
+# Pure additive: services.autoscaler 신규 service 추가만, 기존 service 변경 0.
+#
+services:
+  autoscaler:
+    image: autoscaler:latest
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        com.docker.stack.namespace: app
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+    environment:
+      PROMETHEUS_URL: "http://prometheus:9090"
+      TARGET_SERVICE: "realticket_nest-baseline"
+      POLL_INTERVAL: "5"
+      SCALE_UP_THRESHOLD: "50"
+      SCALE_DOWN_THRESHOLD: "30"
+      MIN_REPLICAS: "1"
+      MAX_REPLICAS: "4"
+      DRY_RUN: "true"
+    networks:
+      - realticket
+    depends_on:
+      - prometheus

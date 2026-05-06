@@ -1,0 +1,9 @@
+# areas/02-orchestration/templates/dimensions/alpha-test-account.patch.yml
+# 활성 조건: bench_stack.alpha_test_account: true
+# 의미: redis 가 테스트 계정 사전 up 된 이미지 사용
+# Pure additive: services.redis-master.image 단일 leaf override 만.
+# δ 책임 (auto-scaler 서비스) 무관 — α 는 image leaf 만 건드린다.
+#
+services:
+  redis-master:
+    image: redis-test-account:latest
