@@ -12,6 +12,8 @@ schema 정의와 작성 가이드의 단일 진실은 영역 문서에 lock — 
 - 매니페스트 작성 가이드: [`areas/01-planning/README.md`](../../areas/01-planning/README.md) — scenario 설계 원칙 + α/β/γ 질문 흐름
 - `slots[].scenario_mode` override: [`areas/04-gatling-integration/README.md`](../../areas/04-gatling-integration/README.md) — `Config.java` default `LOGIN_ONLY` + 6 enum
 
+> **Example quarantine:** `_example-*.yaml` 의 커스텀 `scenario_mode` 값은 schema 시연용 placeholder다. 신규 매니페스트 작성 시 복사하지 않는다. 실제 `slots[].scenario_mode` 값은 사용자가 명시 입력하거나 AI 제안을 사용자가 확인한 경우에만 기록한다. 미확정이면 필드를 생략하고 `implementation_plan` 에 pending task로 남긴다.
+
 ## 디렉토리 구조
 
 ```

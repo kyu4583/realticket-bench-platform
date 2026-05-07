@@ -1,8 +1,9 @@
 # bench/manifests/_example-full.yaml — 전체 매니페스트 예시 (2 슬롯, hypotheses 포함)
 #
-# 사용 의도: 16 core fields + optional bench_stack 시연 + slots[].scenario_mode override + hypotheses 가설 절.
-# duration mode 사용 — N = floor((duration_s - warmup_s) / (per_run_s + cooldown_s))
-#   N = floor((10m - 30s) / (1m + 15s)) = floor(570/75) = 7 iter
+# 사용 의도: 15 core fields + optional objects(bench_stack·context·implementation_plan) 시연
+#            + slots[].scenario_mode override + slots[].source_branch + hypotheses 가설 절.
+# duration mode 사용 — N = floor((duration_s - warmup_s) / (derived_per_run_s + cooldown_s))
+# derived_per_run_s 는 Plan.json stats.simulation_duration_ms 기반으로 orchestration 이 도출.
 #
 # scenario_mode override:
 #   - baseline=SECTION_B (B 안 — PATCH /booking/seat/section)
@@ -11,16 +12,15 @@
 # get_slot_for_iter (run.sh) 가 slot 선택을 결정.
 #
 # hypotheses:
-#   - H1: candidate 의 SSE 좌석 점유 충돌이 baseline 보다 5% 이상 적음
-#   - H2: candidate 의 재연결 비용으로 latency 가 10% 이상 증가하지 않음
+#   - H1: candidate 의 HTTP 5xx rate 가 baseline 보다 5% 초과 악화되지 않음
+#   - H2: candidate 의 재연결 비용으로 event loop lag 가 10% 이상 증가하지 않음
 #
 # 출처:
-#   areas/00-contracts/schema.yaml § 16 core fields + optional bench_stack (yaml 형태 참조)
+#   areas/00-contracts/schema.yaml § 15 core fields + optional objects (yaml 형태 참조)
 #   areas/04-gatling-integration/README.md § -P 키 표 (scenario_mode 6 enum)
 #   areas/00-contracts/README.md § Manifest Schema (단일 진실)
 #
 # Lock #3 (alternating only): slots[] = 2, 두 슬롯 *번갈아* 측정 — concurrent dual 미지원.
-# Lock #4 (region 단일 진실): regions 는 plan_path 가 가리키는 Plan.json 의 stats.regions 가 원천.
 
 manifest_id:    "example-full"
 run_id_prefix:  "example-full"
@@ -29,7 +29,6 @@ run_id_prefix:  "example-full"
 duration:       "10m"
 
 warmup:         "30s"
-per_run:        "1m"
 cooldown:       "15s"
 
 max_failures:   2
@@ -46,14 +45,20 @@ event_ids:
 
 queries:
   - name:    "http_request_rate"
-    promql:  "rate(http_server_requests_seconds_count[1m])"
+    promql:  "sum(rate(http_requests_total{job=\"nest-app\"}[1m]))"
     unit:    "req/s"
-  - name:    "redis_seat_conflict"
-    promql:  "increase(seat_conflict_total[1m])"
-    unit:    "count/min"
-  - name:    "p99_latency_ms"
-    promql:  "histogram_quantile(0.99, rate(http_server_requests_seconds_bucket[1m])) * 1000"
-    unit:    "ms"
+  - name:    "http_error_rate"
+    promql:  "sum(rate(http_requests_total{job=\"nest-app\", status=~\"5..\"}[1m]))"
+    unit:    "req/s"
+  - name:    "node_heap_used_bytes"
+    promql:  "avg(nodejs_heap_size_used_bytes{job=\"nest-app\"})"
+    unit:    "bytes"
+  - name:    "process_cpu_rate"
+    promql:  "avg(rate(process_cpu_seconds_total{job=\"nest-app\"}[1m]))"
+    unit:    "cores"
+  - name:    "eventloop_lag_p99_seconds"
+    promql:  "avg(nodejs_eventloop_lag_p99_seconds{job=\"nest-app\"})"
+    unit:    "seconds"
 
 # Lock #3 alternating: slots[] = 2 (≤2). 두 슬롯 *동시* 부하 금지, *번갈아* 측정.
 slots:
@@ -61,17 +66,72 @@ slots:
     targetUrl:      "http://192.168.138.2:8080"
     image_tag:      "nest:example-full-baseline"
     scenario_mode:  "SECTION_B"   # B 안 — PATCH /booking/seat/section
+    # source_branch 미지정 → origin/dev (기본값)
   - name:           "candidate"
     targetUrl:      "http://192.168.138.2:8081"
     image_tag:      "nest:example-full-candidate"
     scenario_mode:  "SECTION_A"   # A 안 — SSE close + 새 ?section=N 재연결
+    source_branch:  "feat/section-reconnect"   # RealTicket 슬롯 브랜치 기점
 
 hypotheses:
   - id:        "H1"
-    metric:    "redis_seat_conflict"
-    compare:   "candidate < baseline * 0.95"
-    rationale: "A 안(SSE 재연결)이 B 안보다 좌석 점유 충돌이 5% 이상 적다"
+    metric:    "http_error_rate"
+    compare:   "candidate <= baseline * 1.05"
+    rationale: "A 안(SSE 재연결)의 HTTP 5xx rate 가 B 안보다 5% 초과 악화되지 않는다"
   - id:        "H2"
-    metric:    "p99_latency_ms"
+    metric:    "eventloop_lag_p99_seconds"
     compare:   "candidate <= baseline * 1.10"
-    rationale: "A 안의 재연결 비용으로 latency 가 10% 이상 증가하지 않는다"
+    rationale: "A 안의 재연결 비용으로 event loop p99 lag 가 10% 이상 증가하지 않는다"
+
+# ─── 실험 컨텍스트 ─────────────────────────────────────────────────────────
+# 파이프라인 미소비. 새 세션 컨텍스트 복원 및 결과 해석용.
+context:
+  comparison_axis: "SSE 아키텍처 비교 — 단일 연결+PATCH(B안) vs section별 재연결(A안)"
+  baseline:
+    branch: "origin/dev"
+    notes:  "SSE 1회 연결 유지. section 이동 시 PATCH /booking/seat/section 호출"
+  candidate:
+    branch: "feat/section-reconnect"
+    notes:  "SSE 연결 시 ?section=N 파라미터 지정. section 이동 시 SSE close + reconnect"
+  region_flow:  "auth_check → 30s 대기 → subscribe → main_booking"
+  plan_config:  "기존 PlanConfig.json 기본값 사용"
+
+# ─── 구현 계획 ────────────────────────────────────────────────────────────
+# 이 예시는 구현 완료 상태(status: completed). 실제 작성 직후에는 status: "pending".
+# 구현 세션이 tasks 완료 후 done: true + status: completed 갱신 → run.sh 실행 가능.
+implementation_plan:
+  status: "completed"    # pending | completed
+
+  gatling:
+    branch: "bench/example-full"
+    base:   "origin/main"
+    tasks:
+      - id:   G1
+        file: "src/main/java/realticket/simulation/BookingSimulation.java"
+        what: "SECTION_A / SECTION_B 케이스 추가"
+        done: true
+
+  realticket:
+    meta_branch: "bench/example-full"
+    slot_branches:
+      - slot: "baseline"
+        base: "origin/dev"
+      - slot: "candidate"
+        base: "feat/section-reconnect"
+    tasks:
+      - id:     R1
+        target: "meta_branch"
+        what:   "bench-stack/example-full.yml 생성 — base.yml + alpha + beta yq merge"
+        done:   true
+
+  git:
+    tasks:
+      - id:   GIT1
+        what: "gatling repo bench/example-full 브랜치 커밋·push"
+        done: true
+      - id:   GIT2
+        what: "RealTicket repo meta+slot 브랜치 커밋·push"
+        done: true
+      - id:   GIT3
+        what: "VM SSH → pull → docker build → stack deploy"
+        done: true

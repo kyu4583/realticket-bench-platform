@@ -1,35 +1,51 @@
-# areas/00-contracts/schema.yaml — 매니페스트 schema 명세 (16 core fields + optional bench_stack + slots[].scenario_mode override)
+# areas/00-contracts/schema.yaml — 매니페스트 schema 명세 (15 core fields + optional objects)
 #
 # 단일 진실 출처:
 #   areas/00-contracts/README.md § Manifest Schema
 #   본 파일은 위 표의 *재진술 X · 인용 O* (yaml 형태 placeholder).
-#   16 core fields + optional bench_stack enumeration · 타입 · required · 의미는 위 문서가 단일 진실,
+#   15 core fields + optional objects 의 타입·required·의미는 위 문서가 단일 진실,
 #   본 schema.yaml 은 *yaml 기계 가독 형태* 를 제공할 뿐.
 #
-# 16 core fields + optional object (bench_stack):
+# 15 core fields:
 #   1.  manifest_id      string  ✓  매니페스트 식별자 (run_id slug 1차 입력)
 #   2.  run_id_prefix    string  ✓  run_id 생성 시 prefix
 #   3.  iterations       int     ◐  반복 회차 N. duration 과 상호 배타 (XOR)
-#   4.  duration         dur     ◐  총 실행 시간. N = floor((duration-warmup)/(per_run+cooldown))
+#   4.  duration         dur     ◐  총 실행 시간. N = floor((duration-warmup)/(derived_per_run_s+cooldown))
+#                                  derived_per_run_s 는 Plan.json 의 simulation_duration_ms × 1.1 (ceil) — 02-orchestration 이 도출
 #   5.  warmup           dur     ✓  슬롯 ready 대기 시간
-#   6.  per_run          dur     ✓  1 iteration 부하 시간
-#   7.  cooldown         dur     ✓  iteration 종료 후 다음 시작까지
-#   8.  max_failures     int     ✓  누적 실패 ≥ → run 중단 (FAILED 마커)
-#   9.  plan_path        path    ✓  PlanGenerator 출력 JSON 경로 (regions 는 Plan.json 에만, Lock #4)
-#  10.  prom_url         URL     ✓  Prometheus base URL
-#  11.  prom_step        dur     ✓  query_range step (예: 15s)
-#  12.  reset_path       URL     ✓  BE reset endpoint path (`/booking/init/:eventId`)
-#  13.  event_ids        int[]   ✓  reset 호출할 eventId 배열
-#  14.  queries          obj[]   ✓  {name, promql, unit} — summarize 대상 PromQL
-#  15.  slots            obj[]   ✓  {name, targetUrl, image_tag, scenario_mode?} — 최대 2 슬롯 (Lock #3)
-#  16.  hypotheses       obj[]   ✗  가설 절 (선택). 미존재 시 SUMMARY.md 가설 섹션 미생성
+#   6.  cooldown         dur     ✓  iteration 종료 후 다음 시작까지
+#   7.  max_failures     int     ✓  누적 실패 ≥ → run 중단 (FAILED 마커)
+#   8.  plan_path        path    ✓  PlanGenerator 출력 JSON 경로 (좌석 배정 시뮬레이션 결과 JSON)
+#   9.  prom_url         URL     ✓  Prometheus base URL
+#  10.  prom_step        dur     ✓  query_range step (예: 15s)
+#  11.  reset_path       URL     ✓  BE reset endpoint path (`/booking/init/:eventId`)
+#  12.  event_ids        int[]   ✓  reset 호출할 eventId 배열
+#  13.  queries          obj[]   ✓  {name, promql, unit} — summarize 대상 PromQL
+#  14.  slots            obj[]   ✓  {name, targetUrl, image_tag, scenario_mode?, source_branch?} — 최대 2 슬롯 (Lock #3)
+#          └ source_branch  str  ◐  RealTicket 슬롯 브랜치 기점. 미지정 시 origin/dev. 02-orchestration 소비
+#  15.  hypotheses       obj[]   ✗  가설 절 (선택). 미존재 시 SUMMARY.md 가설 섹션 미생성
 #
-# Optional object (16 표준 필드 외 선택 객체):
-#   +.  bench_stack      obj     ✗  4 기능 토글 (alpha_test_account / beta_dual_slots / gamma_sentinel / delta_autoscaler).
-#                                   미존재 시 모두 false — base.yml 단독 deploy
+# per_run 필드 폐기 (rev 2): 사용자 입력 X. PlanGenerator 가 자연 종료 (request_delay_mean / num_users / seats_per_user 결정)
+# → Plan.json 의 stats.simulation_duration_ms 기록 → 02-orchestration 이 ceil(× 1.1) → iter_meta.per_run_ms 저장.
+# 본예매(main_booking) region 의 길이도 동일 값. 03-analysis 는 iter_meta 에서 읽음.
 #
-# scenario_mode 6 enum (Config.java default = LOGIN_ONLY, 04-gatling-integration/contract.md 라인 13):
-#   DYNAMIC | STATIC | PARALLEL | LOGIN_ONLY | SECTION_A | SECTION_B
+# Optional objects (파이프라인 미소비 포함):
+#   +.  bench_stack           obj  ✗  4 기능 토글. 미존재 시 모두 false — base.yml 단독 deploy
+#   +.  context               obj  ✗  실험 목적·설계 결정 기록. 파이프라인 미소비 — 새 세션 컨텍스트 복원용
+#   +.  implementation_plan   obj  ✗  실행 전 구현 계획. status:pending|completed + 영역별 tasks[].
+#                                     파이프라인 미소비. status:completed 아니면 벤치마크 실행 금지
+#
+# scenario_mode — 기본 4종 (Config.java 고정):
+#   DYNAMIC | STATIC | PARALLEL | LOGIN_ONLY
+# 매니페스트 목적에 따라 Gatling 코드를 수정해 커스텀 모드 추가 가능.
+# 커스텀 모드 구현은 반드시 bench/<manifest_id> 브랜치 — main 영구 변경 금지.
+# (예: SECTION_A, SECTION_B 는 특정 매니페스트용 일회성 커스텀 — 영구 enum 아님)
+#
+# provenance rule:
+#   scenario_mode 는 Gatling -PscenarioMode 실행 계약값이므로 AI가 임의 derive하지 않는다.
+#   사용자가 명시 입력하거나 AI 제안을 사용자가 확인한 경우에만 YAML에 기록한다.
+#   미확정이면 필드 생략 + implementation_plan.gatling.tasks pending 으로 남긴다.
+#   _example-*.yaml 의 커스텀 mode 이름을 신규 매니페스트에 복사 금지.
 #
 # iterations·duration 상호 배타 (XOR — run.sh main 검증):
 #   - 둘 다 정의 → die "iterations and duration are mutually exclusive"
@@ -37,8 +53,7 @@
 #
 # Lock 인용:
 #   - Lock #3 (alternating only): slots[] ≤ 2. 두 슬롯 동시 부하 금지. iteration 이 슬롯을 번갈아 선택.
-#   - Lock #4 (region 단일 진실): regions 는 plan_path 가 가리키는 Plan.json 의 stats.regions 가 원천.
-#                                  매니페스트는 regions 를 override 하지 않는다.
+#   - Lock #4 (fire-and-forget): VM nohup 실행. RUNNING/COMPLETED/FAILED 마커 + progress.json.
 #
 # 다음은 schema placeholder — 실제 매니페스트는 _example-min.yaml / _example-full.yaml 참조.
 
@@ -50,7 +65,6 @@ iterations:     0
 # duration:     "<6h|10m>"
 
 warmup:         "<duration>"
-per_run:        "<duration>"
 cooldown:       "<duration>"
 
 max_failures:   0
@@ -74,10 +88,12 @@ slots:
     targetUrl:      "http://192.168.138.2:8080"
     image_tag:      "nest:<manifest_id>"
     scenario_mode:  "LOGIN_ONLY"  # override. 미정의 시 Config.java default LOGIN_ONLY.
+    # source_branch 미지정 → origin/dev (기본값)
   # - name:           "candidate"
   #   targetUrl:      "http://192.168.138.2:8081"
   #   image_tag:      "nest:<manifest_id>-candidate"
   #   scenario_mode:  "SECTION_A"
+  #   source_branch:  "<feature-branch>"  # RealTicket 슬롯 브랜치 기점. 미지정 시 origin/dev
 
 # hypotheses (선택 — 미존재 시 SUMMARY.md 가설 섹션 미생성)
 # hypotheses:
@@ -95,3 +111,41 @@ bench_stack:
   beta_dual_slots:    false   # β — true 시 nest-candidate 신규 service 추가 (포트 8081)
   gamma_sentinel:     false   # γ — true 시 redis-replica + redis-sentinel-1/2/3 추가 + nest-baseline.environment.REDIS_SENTINEL_MODE override
   delta_autoscaler:   false   # δ — true 시 autoscaler 신규 service 추가
+
+# context (object, optional) — 파이프라인 미소비
+# 실험 목적·비교 변수·설계 결정을 자연어로 기록. 매니페스트 작성 세션에서 AI가 채움.
+# context:
+#   comparison_axis: "<비교 변수 1줄 요약>"
+#   baseline_notes:  "<baseline 슬롯 설명>"
+#   candidate_notes: "<candidate 슬롯 설명>"
+#   region_flow:     "<시나리오 단계 흐름 자연어>"
+#   plan_config:     "<PlanConfig 설정 메모 또는 기본값 확인 여부>"
+
+# implementation_plan (object, optional) — 파이프라인 미소비
+# 벤치마크 실행 전 완료해야 할 외부 repo 코드 변경 계획.
+# status: pending 이면 run.sh 실행 금지. 구현 세션이 tasks 완료 후 done: true + status: completed 갱신.
+# implementation_plan:
+#   status: "pending"    # pending | completed
+#   gatling:
+#     branch: "bench/<manifest_id>"
+#     base:   "origin/main"
+#     tasks:
+#       - id:   G1
+#         file: "<path>"
+#         what: "<변경 내용>"
+#         done: false
+#   realticket:
+#     meta_branch: "bench/<manifest_id>"
+#     slot_branches:
+#       - slot: "<slot_name>"
+#         base: "<source_branch 또는 origin/dev>"
+#     tasks:
+#       - id:     R1
+#         target: "meta_branch"
+#         what:   "<변경 내용>"
+#         done:   false
+#   git:
+#     tasks:
+#       - id:   GIT1
+#         what: "<push/deploy 절차>"
+#         done: false

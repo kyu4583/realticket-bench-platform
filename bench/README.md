@@ -6,9 +6,9 @@
 
 ## 영역 spec 참조
 
-- 결과 디렉토리 구조: [`areas/00-contracts/README.md` § 결과 디렉토리 구조](../areas/00-contracts/README.md) — `bench/results/<run_id>/` 트리 정의 단일 진실
+- 결과 디렉토리 구조: [`areas/00-contracts/README.md` § 결과 디렉토리 구조](../areas/00-contracts/README.md) — `bench/results/<manifest_id>/<run_id>/` 트리 정의 단일 진실
 - 7 영역 진입: [`areas/README.md`](../areas/README.md) — 7 영역 메타 가이드 (어디부터 읽을지 + 영역 간 호출 그래프)
-- 5 Lock 매핑: [`CLAUDE.md` § 5 Lock 원칙 + 영역 매핑](../CLAUDE.md) — Lock #1~#5 책임 영역 표
+- 4 Lock 매핑: [`CLAUDE.md` § 4 Lock 원칙 + 영역 매핑](../CLAUDE.md) — Lock #1~#4 책임 영역 표
 
 ## 디렉토리 구조
 
@@ -19,7 +19,7 @@ bench/
 │   ├── README.md         # 01-planning § Scenario 설계 + 00-contracts § Manifest Schema 인용
 │   ├── _example-min.yaml
 │   └── _example-full.yaml
-└── results/              # gitignored — dry-run 결과 (대용량 simulation.log + iter 디렉토리)
+└── results/              # gitignored — manifest별 결과 (run_id + iter 디렉토리)
 ```
 
 ## 사용
@@ -29,7 +29,7 @@ bench/
 bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 
 # 진행 상태 polling (fire-and-forget 모드)
-cat bench/results/<run_id>/progress.json
+cat bench/results/<manifest_id>/<run_id>/progress.json
 ```
 
 ## 환경 변수

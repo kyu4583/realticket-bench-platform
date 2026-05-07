@@ -64,7 +64,6 @@
 - 매크로·SSHFS·Postman 사용 금지 — 모든 조작은 Bash 한 줄 (Lock #1)
 - RealTicket main/dev 브랜치 직접 변경 금지 — 매니페스트 ID 브랜치에만 commit (Lock #2)
 - 두 슬롯 동시 부하 구현 금지 (Lock #3 영구 미지원)
-- region을 매니페스트 또는 분석 모듈 내부에 재정의 금지 (Lock #4)
-- fire-and-forget을 foreground로 변경 금지 (Lock #5)
+- fire-and-forget을 foreground로 변경 금지 (Lock #4)
 - 외부 gatling/RealTicket repo의 README·CLAUDE.md 수정 금지
 - `.planning/` 문서 링크를 areas/ 문서에 포함 금지 (gitignored)

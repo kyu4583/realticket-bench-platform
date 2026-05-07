@@ -1,17 +1,14 @@
 # bench/manifests/_example-min.yaml — 최소 매니페스트 예시 (1 슬롯, hypotheses 없음)
 #
-# 사용 의도: 파이프라인 무결성 검증 — 1 슬롯·iter:1·warmup 30s·per_run 1m·cooldown 15s.
-# hypotheses 없음 → SUMMARY.md 가설 섹션 미생성. cross product 표만 출력.
+# 사용 의도: 파이프라인 무결성 검증 — 1 슬롯·iter:1·warmup 30s·cooldown 15s.
+# hypotheses 없음 → SUMMARY.md 가설 섹션 미생성.
 # scenario_mode 미override → Config.java default LOGIN_ONLY 적용.
 #
 # 출처:
-#   areas/00-contracts/schema.yaml § 16 core fields + optional bench_stack (yaml 형태 참조)
+#   areas/00-contracts/schema.yaml § 15 core fields + optional objects (yaml 형태 참조)
 #   areas/01-planning/README.md § Scenario 설계 원칙 (매니페스트 작성 패턴)
 #   areas/00-contracts/README.md § Manifest Schema (단일 진실)
 #
-# Lock #4 (region 단일 진실): regions 는 plan_path 가 가리키는 Plan.json 의 stats.regions 가 원천.
-#                              본 매니페스트는 regions 를 정의하지 않는다.
-
 manifest_id:    "example-min"
 run_id_prefix:  "example-min"
 
@@ -19,7 +16,6 @@ run_id_prefix:  "example-min"
 iterations:     1
 
 warmup:         "30s"
-per_run:        "1m"
 cooldown:       "15s"
 
 max_failures:   1
@@ -35,7 +31,7 @@ event_ids:
 
 queries:
   - name:    "http_request_rate"
-    promql:  "rate(http_server_requests_seconds_count[1m])"
+    promql:  "sum(rate(http_requests_total{job=\"nest-app\"}[1m]))"
     unit:    "req/s"
 
 slots:

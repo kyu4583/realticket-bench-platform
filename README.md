@@ -10,7 +10,7 @@
 
 벤치마크 목적이 바뀔 때마다 함께 바뀌어야 하는 요소가 많아 번거롭다.
 
-- **Gatling 시나리오** — 사소한 서버 API 명세 변경 대응이나 가상 사용자의 행동 변경 등, 깊이는 얕지만 번거로운 수정이 잦다. 해당 벤치마크에서만 쓰이는 일회성 변경인 경우도 많아 브랜치 격리와 버전 관리까지 신경써야 한다.
+- **Gatling 부하 시뮬레이션 시나리오** — 사소한 서버 API 명세 변경 대응이나 가상 사용자의 행동 변경 등, 깊이는 얕지만 번거로운 수정이 잦다. 해당 벤치마크에서만 쓰이는 일회성 변경인 경우도 많아 브랜치 격리와 버전 관리까지 신경써야 한다.
 - **docker stack 구성** — Nest 슬롯 수, Redis Sentinel 활성화, 오토스케일링, 테스트 계정 사전 적재 등 조합이 목적마다 달라진다.
 - **이미지 빌드·VM 배포** — 스택 구성이 확정되면 RealTicket 소스를 VM으로 전달하고 Docker 이미지를 빌드한 뒤 stack을 재기동해야 한다. SSH 접속·소스 전달·이미지 빌드·스택 재기동이 매 벤치마크마다 반복되는 수작업이다.
 - **측정·분석 범위** — 어떤 구간에 집중하는지, 구간을 어떻게 자르는지, Prometheus에서 무엇을 수집하는지, 결과를 어떤 기준으로 해석하는지가 시나리오와 함께 달라진다.
@@ -81,15 +81,14 @@ bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 
 → [영역 전체 가이드 및 AI 작업 분담](areas/README.md)
 
-## 5 Lock 원칙
+## 4 Lock 원칙
 
 | Lock | 원칙 |
 |------|------|
 | #1 | AI 단일 제어 평면 — 매크로·SSHFS·Postman 없이 AI가 모든 것을 제어 |
 | #2 | RealTicket BE 변경 0 — 기존 `POST /booking/init/:eventId` 재사용 |
 | #3 | 슬롯 alternating only — concurrent dual 미지원 |
-| #4 | region이 단일 진실 — PlanGenerator의 `regions:`가 시뮬레이션·분석의 단일 출처 |
-| #5 | Fire-and-forget + 자동 복귀 — VM `nohup`, RUNNING/COMPLETED/FAILED 마커 |
+| #4 | Fire-and-forget + 자동 복귀 — VM `nohup`, RUNNING/COMPLETED/FAILED 마커 |
 
 ## 구조
 

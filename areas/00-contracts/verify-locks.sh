@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# areas/00-contracts/verify-locks.sh — 5 Lock 위배 0건 검증.
+# areas/00-contracts/verify-locks.sh — 4 Lock 위배 0건 검증.
 # 사용: bash areas/00-contracts/verify-locks.sh
 # exit 0 = ALL PASS, exit 1 = ANY FAIL
-# Source: areas/02-orchestration/README.md § Lock #5 fire-and-forget 마커
+# Source: areas/02-orchestration/README.md § Lock #4 fire-and-forget 마커
 
 set -uo pipefail
 
@@ -116,61 +116,31 @@ else
 fi
 
 # ===============================================================
-section "Lock #4 — region 단일 진실 (gatling 원천 ↔ analyze 소비)"
-# ===============================================================
-# gatling.sh 의 run_gatling 이 -PplanPath 인자로 Plan.json 전달 (region 원천 단일 진실)
-if grep -qE 'PplanPath' areas/04-gatling-integration/lib/gatling.sh; then
-  pass "Lock #4 — run_gatling 의 -PplanPath (Plan.json = region 원천)"
-else
-  fail "Lock #4 — run_gatling 의 -PplanPath 누락"
-fi
-# parse_simulation_log 가 region 라벨 추출
-if grep -qE '\bregion\b' areas/03-analysis/analyze/parse_simulation_log.py; then
-  pass "Lock #4 — parse_simulation_log 의 region 추출"
-else
-  fail "Lock #4 — parse_simulation_log 의 region 추출 누락"
-fi
-# raw_requests.jsonl 의 region 필드
-if grep -qE '"region"' areas/03-analysis/analyze/parse_simulation_log.py; then
-  pass "Lock #4 — raw_requests.jsonl 의 region 필드"
-else
-  fail "Lock #4 — raw_requests.jsonl 의 region 필드 누락"
-fi
-# areas/02-orchestration/lib/*.sh 에 region 하드코딩 0건 — model 정의는 00-contracts 에만
-n=$(grep -rcE 'regions[[:space:]]*=[[:space:]]*\[|regions[[:space:]]*:[[:space:]]*\[' areas/02-orchestration/lib/ 2>/dev/null \
-    | awk -F: '{s+=$2} END {print s+0}')
-if [[ "$n" == "0" ]]; then
-  pass "Lock #4 — areas/02-orchestration/lib/*.sh 에 region 하드코딩 0건 (모델은 00-contracts only)"
-else
-  fail "Lock #4 — areas/02-orchestration/lib/*.sh 에 region 하드코딩 $n 건"
-fi
-
-# ===============================================================
-section "Lock #5 — Fire-and-forget 마커 (RUNNING/COMPLETED/FAILED)"
+section "Lock #4 — Fire-and-forget 마커 (RUNNING/COMPLETED/FAILED)"
 # ===============================================================
 for marker in RUNNING COMPLETED FAILED; do
   if grep -q "$marker" areas/02-orchestration/run.sh areas/02-orchestration/lib/lifecycle.sh 2>/dev/null; then
-    pass "Lock #5 — $marker 마커 작성 lock"
+    pass "Lock #4 — $marker 마커 작성 lock"
   else
-    fail "Lock #5 — $marker 마커 누락"
+    fail "Lock #4 — $marker 마커 누락"
   fi
 done
 # progress.json 6 필드 (atomic write — jq -n one-liner 또는 분리 라인)
 if grep -qE 'current_iter.*total_iter.*eta.*phase.*slot.*failed_iters|failed_iters.*slot.*phase.*eta.*total_iter.*current_iter' areas/02-orchestration/lib/lifecycle.sh; then
-  pass "Lock #5 — progress.json 6 필드 (jq -n one-liner)"
+  pass "Lock #4 — progress.json 6 필드 (jq -n one-liner)"
 else
   m=$(grep -cE '"(current_iter|total_iter|eta|phase|slot|failed_iters)"' areas/02-orchestration/lib/lifecycle.sh 2>/dev/null)
   if [[ "$m" -ge 6 ]]; then
-    pass "Lock #5 — progress.json 6 필드 (분리 라인 카운트=$m)"
+    pass "Lock #4 — progress.json 6 필드 (분리 라인 카운트=$m)"
   else
-    fail "Lock #5 — progress.json 6 필드 누락 (카운트=$m)"
+    fail "Lock #4 — progress.json 6 필드 누락 (카운트=$m)"
   fi
 fi
 # trap cleanup_on_exit EXIT (정상·실패·SIGINT 모두 cleanup)
 if grep -q 'trap cleanup_on_exit EXIT' areas/02-orchestration/run.sh; then
-  pass "Lock #5 — trap cleanup_on_exit EXIT (정상·실패·SIGINT 모두)"
+  pass "Lock #4 — trap cleanup_on_exit EXIT (정상·실패·SIGINT 모두)"
 else
-  fail "Lock #5 — trap cleanup_on_exit EXIT 누락"
+  fail "Lock #4 — trap cleanup_on_exit EXIT 누락"
 fi
 
 # ===============================================================
@@ -223,7 +193,7 @@ else
 fi
 
 # ===============================================================
-section "스키마·매니페스트 검증 — schema.yaml 16 core fields + optional bench_stack + 예시 매니페스트 2개"
+section "스키마·매니페스트 검증 — schema.yaml 15 core fields + optional bench_stack + 예시 매니페스트 2개"
 # ===============================================================
 if yaml_parse areas/00-contracts/schema.yaml; then
   pass "스키마 — schema.yaml YAML 파싱"
@@ -231,10 +201,10 @@ else
   fail "스키마 — schema.yaml YAML 파싱 실패"
 fi
 n=$(grep -cE '^#\s+[0-9]+\.' areas/00-contracts/schema.yaml)
-if [[ "$n" == "16" ]]; then
-  pass "스키마 — 16 core fields enumerate 주석 (실제 $n)"
+if [[ "$n" == "15" ]]; then
+  pass "스키마 — 15 core fields enumerate 주석 (실제 $n)"
 else
-  fail "스키마 — 16 core fields 주석 (실제 $n)"
+  fail "스키마 — 15 core fields 주석 (실제 $n)"
 fi
 if yaml_parse bench/manifests/_example-min.yaml && \
    yaml_parse bench/manifests/_example-full.yaml; then
@@ -265,11 +235,11 @@ if grep -q 'def parse_simulation_log_to_raw_requests' areas/03-analysis/analyze/
 else
   fail "분석 모듈 — parse_simulation_log_to_raw_requests 누락"
 fi
-n=$(grep -cE '"(region|request_name|status|response_time_ms|timestamp_epoch|source)"' areas/03-analysis/analyze/parse_simulation_log.py)
-if [[ "$n" -ge 6 ]]; then
-  pass "분석 모듈 — raw_requests.jsonl 6 필드 (실제 $n)"
+n=$(grep -cE '"(request_name|status|response_time_ms|timestamp_epoch|source)"' areas/03-analysis/analyze/parse_simulation_log.py)
+if [[ "$n" -ge 5 ]]; then
+  pass "분석 모듈 — raw_requests.jsonl 5 필드 (실제 $n)"
 else
-  fail "분석 모듈 — raw_requests.jsonl 필드 누락 ($n/6)"
+  fail "분석 모듈 — raw_requests.jsonl 필드 누락 ($n/5)"
 fi
 # 3 모듈 --selftest exit 0 (PyYAML 가용 시 PASS, 미가용 시 fallback)
 for mod in parse_simulation_log prom_query summarize; do

@@ -32,21 +32,20 @@
 
 **외부 repo 자체 README/AGENTS.md는 수정 X** — bench는 *해석/원칙*만, 사실은 외부 진실. 두 진실 회피.
 
-### 5 Lock 원칙 + 영역 매핑 (위배 절대 금지 — v1.0 ENTRY §3 계승)
+### 4 Lock 원칙 + 영역 매핑 (위배 절대 금지 — v1.0 ENTRY §3 계승)
 
 | Lock | 원칙 | 책임 영역 |
 |------|------|-----------|
 | #1 | Codex 단일 제어 평면 — 매크로·SSHFS·Postman *전부 폐기* | **전 영역** |
 | #2 | RealTicket BE 변경 0 — 기존 `POST /booking/init/:eventId` 재사용 | **05-realticket-integration** |
 | #3 | 슬롯 alternating only — concurrent dual 미지원 | **02-orchestration** |
-| #4 | region이 단일 진실 — PlanGenerator의 `regions:`가 시뮬레이션·simulation.log·분석의 단일 출처. region/slot/iteration 모델 자체는 00에 lock | **04-gatling-integration**(원천) + **03-analysis**(소비) + **00-contracts**(모델 정의) |
-| #5 | Fire-and-forget + 자동 복귀 — VM `nohup`, RUNNING/COMPLETED/FAILED + progress.json | **02-orchestration** |
+| #4 | Fire-and-forget + 자동 복귀 — VM `nohup`, RUNNING/COMPLETED/FAILED + progress.json | **02-orchestration** |
 
 ### AI 작업 방식 — 플랫폼 컨셉
 
 본 플랫폼은 **AI가 단일 제어 평면**으로 벤치마크를 지휘한다. 사용자는 자연어 명령 한 번으로 전체 흐름이 완성된다.
 
-**매니페스트 시작 트리거:** 사용자가 "매니페스트 시작하자" 또는 동등 자연어 → AI가 7단계 질문 수집 → 자동 생성
+**매니페스트 시작 트리거:** 사용자가 "매니페스트 시작하자" 또는 동등 자연어 → **반드시 [areas/01-planning/README.md § 매니페스트 수집 흐름 9단계](areas/01-planning/README.md) + § AI 자동 derive 항목** 을 먼저 읽고 그 순서대로 수집 → 자동 생성. schema 단일 진실은 [areas/00-contracts/README.md § Manifest Schema](areas/00-contracts/README.md) (15 core fields + optional bench_stack).
 
 **AI가 자동 수행하는 것 (사람 개입 0):**
 1. 매니페스트 YAML 생성 (`bench/manifests/<id>.yaml`)
