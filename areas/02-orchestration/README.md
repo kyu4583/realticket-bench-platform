@@ -12,7 +12,7 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 |---|------|------|----------|
 | 1 | `parse_duration()` | util | `6h`·`10m`·`30s` ISO8601-like 문자열을 초 단위 정수로 변환 |
 | 2 | `manifest_yq()` | util | yq로 매니페스트 1 필드 조회. multi-document YAML 첫 문서만 파싱 |
-| 3 | `prepare_gatling_branch()` | branch | gatling repo `bench/<manifest_id>` 브랜치 분기 + 코드 수정 + commit |
+| 3 | `prepare_gatling_branch()` | branch | 구현 완료된 gatling repo `bench/<manifest_id>` 브랜치 체크아웃 + origin 동기화 |
 | 4 | `prepare_realticket_branches()` | branch | RealTicket repo 메타·슬롯 브랜치 분기 + yml commit + push |
 | 5 | `generate_bench_stack_yml()` | branch | `areas/02-orchestration/templates/docker-stack.base.yml` → α/β/γ/δ 변형 → `bench-stack/<manifest_id>.yml` 생성 |
 | 6 | `apply_untracked_overrides()` | branch | VM에 git 미추적 빌드 파일 scp 적용 + 경로 목록 기록 |
@@ -32,9 +32,10 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 
 ## 매니페스트 실행 3단계
 
-### 준비 단계 (매니페스트 시작)
+### 준비 단계 (매니페스트 실행 시작)
 
 ```
+implementation_plan preflight # status=completed + Gatling research/change_plan 확인
 prepare_gatling_branch()      # 3번 함수
 prepare_realticket_branches() # 4번 함수
 generate_bench_stack_yml()    # 5번 함수
@@ -42,6 +43,8 @@ apply_untracked_overrides()   # 6번 함수
 build_vm_images()             # 7번 함수
 admin_login()                 # 8번 함수
 ```
+
+검증 전용으로 `BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh <manifest>` 를 실행하면 preflight 통과 여부만 확인하고 외부 repo 브랜치·VM·결과 디렉토리는 건드리지 않는다.
 
 ### iter 루프 (매니페스트 실행)
 
@@ -73,6 +76,8 @@ nohup bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml >/dev/n
 ```
 
 이후 ssh 세션·AI conversation을 종료해도 run.sh는 VM에서 지속. 로그는 run.sh가 생성한 `bench/results/<manifest_id>/<run_id>/run.log`에 기록된다. 마커 + `progress.json`이 유일한 진행/종료 인터페이스.
+
+매니페스트의 `workflow_state` 는 `run.sh` 시작 전 작업 hand-off 용이다. `run.sh` 실행 이후에는 iteration 진행률이나 분석 상태를 매니페스트에 중복 기록하지 않는다.
 
 | 상태 | 마커 | 의미 |
 |------|------|------|
@@ -169,4 +174,5 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 
 - concurrent dual 부하 구현 추가 금지 (Lock #3 영구 미지원)
 - 마커 파일 외의 상태 파일 신규 추가 금지 (Lock #4)
+- `run.sh` 실행 중 진행률을 매니페스트 `workflow_state` 에 중복 기록 금지
 - fire-and-forget 흐름을 foreground로 변경 금지

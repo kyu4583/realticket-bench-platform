@@ -26,15 +26,14 @@
 
 **AI가 자동으로 수행하는 것:**
 
-1. 매니페스트 수집 — 사용자에게 7단계 질문으로 벤치마크 설계 완성
-2. docker stack 정의 생성 — 4 기능 토글 조합에 따라 자동 합성
-3. Gatling repo 브랜치 분기·코드 수정·commit·push
-4. RealTicket repo 브랜치 분기·yml commit·push
-5. VM SSH → 이미지 빌드 → docker stack deploy
-6. 부하 시뮬레이션 실행 (Gatling)
-7. Prometheus 메트릭 수집
-8. 분석 모듈 실행 → `SUMMARY.md` 자동 생성
-9. 외부 repo main 복귀 + 브랜치 영구 보존
+1. 매니페스트 수집 — 사용자에게 9단계 질문으로 벤치마크 설계 완성
+2. Gatling 코드베이스 read-only 리서치 → `implementation_plan.gatling` 기록 + `workflow_state` 재개 포인터 초기화
+3. 구현 세션에서 docker stack 정의·Gatling 코드·RealTicket 브랜치 준비
+4. VM SSH → 이미지 빌드 → docker stack deploy
+5. 부하 시뮬레이션 실행 (Gatling)
+6. Prometheus 메트릭 수집
+7. 분석 모듈 실행 → `SUMMARY.md` 자동 생성
+8. 외부 repo main 복귀 + 브랜치 영구 보존
 
 ## 시작하기
 
@@ -71,8 +70,8 @@ bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 
 | # | 영역 | 책임 |
 |---|------|------|
-| 00 | [contracts](areas/00-contracts/README.md) | manifest schema 16 core fields + optional `bench_stack` · 결과 디렉토리 구조 · 용어집 |
-| 01 | [planning](areas/01-planning/README.md) | 매니페스트 수집 흐름 · scenario 설계 |
+| 00 | [contracts](areas/00-contracts/README.md) | manifest schema 15 core fields + optional objects · 결과 디렉토리 구조 · 용어집 |
+| 01 | [planning](areas/01-planning/README.md) | 매니페스트 수집 흐름 · scenario 설계 · Gatling 리서치 기반 구현 계획 · 실행 전 재개 상태 |
 | 02 | [orchestration](areas/02-orchestration/README.md) | run.sh · 브랜치 라이프사이클 · fire-and-forget |
 | 03 | [analysis](areas/03-analysis/README.md) | 분석 모듈 · 결과 해석 |
 | 04 | [gatling-integration](areas/04-gatling-integration/README.md) | Gatling repo 인터페이스 · 브랜치 격리 |

@@ -153,6 +153,7 @@ RealTicket dev에 변경이 생긴 경우 아래 명령으로 최신 커밋을 �
 
 - 매니페스트 시작 시: `prepare_realticket_branches()` 7단계 실행
 - VM 빌드: `build_vm_images()` 3단계 ssh 트리거
+- 실행 전 구현/브랜치 작업을 수동 세션에서 진행할 때는 관련 `implementation_plan.realticket`/`implementation_plan.git` 작업의 `done` 값과 매니페스트 `workflow_state` 를 함께 갱신
 - 매니페스트 종료 시: `restore_main_branches()` (main 복귀, 브랜치 삭제 X)
 
 ### 행동 금지

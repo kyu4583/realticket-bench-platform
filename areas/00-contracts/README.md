@@ -2,7 +2,7 @@
 
 본 영역은 7개 영역이 공통으로 의존하는 계약을 lock한다. 다른 영역 문서는 본 파일을 참조하며, 아래 정의를 **재진술하지 않는다**.
 
-5개 단일 진실 항목: (1) manifest schema 15 core fields + optional `bench_stack`·`context`·`implementation_plan` (2) slot·iteration 모델 (3) run_id 형식 (4) 결과 디렉토리 구조 (5) 용어집.
+5개 단일 진실 항목: (1) manifest schema 15 core fields + optional `bench_stack`·`context`·`implementation_plan`·`workflow_state` (2) slot·iteration 모델 (3) run_id 형식 (4) 결과 디렉토리 구조 (5) 용어집.
 
 ---
 
@@ -29,9 +29,73 @@
 | 15 | `hypotheses` | object[] | ✗ | 가설 절. 미존재 시 `summarize.py`가 가설 섹션 미생성 |
 | + | `bench_stack` | object (`{alpha_test_account, beta_dual_slots, gamma_sentinel, delta_autoscaler}` — 모두 boolean, default `false`) | ✗ | optional. 4 기능 토글. 미존재 시 모두 disabled — base.yml 단독 deploy |
 | + | `context` | object | ✗ | optional. 실험 목적·비교 변수·설계 결정 기록. **파이프라인 미소비** — 새 세션 컨텍스트 복원용. 매니페스트 작성 세션에서 AI가 논의 내용을 채움 |
-| + | `implementation_plan` | object | ✗ | optional. 실행 전 외부 repo 구현 계획. `status: pending\|completed` + 영역별 `tasks[]{id,what,done}`. **파이프라인 미소비** — 구현 세션이 순서대로 실행 후 `done: true`·`status: completed` 갱신. `status: completed` 아니면 벤치마크 실행 금지 |
+| + | `implementation_plan` | object | ✗ | optional. 실행 전 외부 repo 구현 계획. `status: pending\|completed` + 영역별 계획. **run.sh preflight 소비** — `status: completed` 가 아니거나 `gatling.research_summary`/`gatling.change_plan` 이 비어 있으면 벤치마크 실행 금지 |
+| + | `workflow_state` | object | ✗ | optional. **실행 전 AI 작업 재개 상태**. 현재 작업 포인터·마지막 완료·다음 행동을 기록한다. `run.sh` 는 소비하지 않으며, 벤치마크 시작 후 진행 상태는 결과 디렉토리 마커와 `progress.json` 이 단일 진실 |
 
-> **`scenario_mode` provenance rule:** `slots[].scenario_mode` 는 Gatling 실행 계약값(`-PscenarioMode`)이므로 AI가 임의 derive하지 않는다. 값은 사용자가 명시 입력하거나, AI가 제안한 값을 사용자가 확인한 경우에만 YAML에 기록한다. 사용자가 확정하지 않으면 필드를 생략하고 `implementation_plan.gatling.tasks` 에 "scenario_mode 이름/구현 확정" pending task로 남긴다. 예시 파일의 커스텀 mode 이름이나 기존 기본 mode 이름을 사용자 확인 없이 실제 매니페스트 값으로 전용 금지.
+> **`scenario_mode` provenance rule:** `slots[].scenario_mode` 는 Gatling 실행 계약값(`-PscenarioMode`)이므로 AI가 임의 derive하지 않는다. 값은 사용자가 명시 입력하거나, AI가 제안한 값을 사용자가 확인한 경우에만 YAML에 기록한다. 사용자가 확정하지 않으면 필드를 생략하고 `implementation_plan.gatling.scenario_decisions` 에 "scenario_mode 이름/구현 확정" pending 결정을 남긴다. 예시 파일의 커스텀 mode 이름이나 기존 기본 mode 이름을 사용자 확인 없이 실제 매니페스트 값으로 전용 금지.
+
+### `implementation_plan.gatling` 리서치 구조
+
+매니페스트 작성 세션은 Gatling repo 를 read-only 로 리서치하고, 결과를 매니페스트에 직접 기록한다. 실제 브랜치 분기·코드 수정·Plan.json 생성·commit·push 는 구현 세션 책임이다.
+
+```yaml
+implementation_plan:
+  status: "pending"        # pending | completed
+  gatling:
+    branch: "bench/<manifest_id>"
+    base: "origin/main"
+    research_summary: "<기본 4종 mode 충족 가능 여부 + 커스텀 필요성 판단>"
+    repo_state:
+      current_branch: "<read-only 확인값>"
+      dirty: false
+      origin_main_latest: "<short hash date subject>"
+      protected_existing_changes: []
+    scenario_decisions:
+      - slot: "baseline"
+        mode: "PARALLEL"
+        custom_required: false
+        rationale: "<왜 이 mode 인지>"
+    change_plan:
+      - id: "G1"
+        file: "app/src/gatling/java/..."
+        intent: "<변경 목적>"
+        base_code_path: "<복사/확장 기준 코드>"
+        preserve: ["login flow", "Plan parsing", "user injection"]
+        done: false
+    acceptance_checks:
+      - "PlanGenerator.py --selftest"
+      - "EFFECTIVE_CONFIG 에 scenarioMode/planPath/targetUrl 반영 확인"
+      - "Plan.json stats.simulation_duration_ms > 0 확인"
+      - "BookingSimulation scenario dispatch 확인"
+    risks:
+      - "화이트리스트 밖 -P 키는 silent no-op"
+      - "alpha_test_account=true 일 때 login 액션 생략 필요"
+```
+
+`run.sh` 의 실행 전 preflight 는 최소한 `implementation_plan.status == completed`, `implementation_plan.gatling.research_summary` 존재, `implementation_plan.gatling.change_plan` 1개 이상을 검사한다.
+
+### `workflow_state` 재개 구조
+
+`workflow_state` 는 매니페스트 작성 이후부터 `run.sh` 시작 전까지 AI가 직접 갱신하는 hand-off 블록이다. 새 세션은 이 절을 먼저 읽고, `current_task_ref` 가 가리키는 `implementation_plan` 작업부터 이어서 진행한다.
+
+```yaml
+workflow_state:
+  status: "implementing"  # drafting | implementing | blocked | ready_to_run
+  active_area: "04-gatling-integration"
+  current_task_ref: "implementation_plan.gatling.change_plan[G2]"
+  last_completed: "G1 Config.java 변경 완료"
+  next_action: "G2 app/build.gradle -P 포워딩 구현 후 acceptance_checks 1차 실행"
+  updated_at: "2026-05-07T00:00:00Z"
+  handoff_notes:
+    - "외부 repo 변경은 매니페스트 ID 브랜치에만 적용"
+```
+
+운영 규칙:
+
+- 작업을 하나 완료할 때마다 해당 `implementation_plan.*.done` 을 갱신하고 `workflow_state` 를 같은 커밋/세션에서 갱신한다.
+- 세션을 종료하거나 막혔을 때는 `next_action` 을 자연어 1문장으로 남긴다. 새 세션이 별도 대화 기록 없이 바로 실행할 수 있어야 한다.
+- 모든 실행 전 작업이 끝나면 `implementation_plan.status: completed`, `workflow_state.status: ready_to_run`, `next_action: "BENCH_PREFLIGHT_ONLY=1 ..."` 형태로 둔다.
+- `run.sh` 실행 이후의 iteration 진행률·Prometheus 수집·SUMMARY 생성 상태는 매니페스트에 쓰지 않는다. 이 구간의 단일 진실은 `bench/results/<manifest_id>/<run_id>/` 의 마커와 산출물이다.
 
 > **per_run 도출 규칙 (rev 2):** 매니페스트는 `per_run` 을 입력받지 않는다. PlanGenerator 가 `simulation_duration_ms` 입력 없이 `request_delay_mean`/`num_users`/`seats_per_user` 로 자연 종료 — Plan.json 의 `stats.simulation_duration_ms` 가 결정. 02-orchestration 이 `per_run_ms = ceil(simulation_duration_ms × 1.1)` 도출하여 iter_meta.json 에 기록 + phases.json 의 `main_booking` end_ms 로 사용. 본예매(main_booking) region 의 길이 = derived per_run.
 
@@ -183,7 +247,8 @@ RealTicket    :
 | **fire-and-forget** | run.sh가 VM `nohup`으로 실행되어 ssh·conversation 종료 후에도 지속 (Lock #4) | foreground 실행과 반대 |
 | **alternating** | 두 슬롯을 번갈아 측정 (한 번에 한 슬롯). Lock #3 | concurrent와 반대 |
 | **가설 절 (hypotheses)** | 매니페스트 15번째 필드. summarize.py가 slot × request_type 표를 생성 후 PASS/FAIL 판정 | 미존재 시 가설 섹션 미생성 |
-| **implementation_plan** | 매니페스트 optional 절. 외부 repo 구현 계획 + 완료 상태. `status: pending` 이면 벤치마크 실행 금지 | context 절과 다름 — context는 설계 기록, implementation_plan은 실행 전 task 목록 |
+| **implementation_plan** | 매니페스트 optional 절. 외부 repo 구현 계획 + 완료 상태. Gatling 리서치 요약과 파일별 변경 계획을 포함하며 `status: pending` 이면 벤치마크 실행 금지 | context 절과 다름 — context는 설계 기록, implementation_plan은 실행 전 task 목록 |
+| **workflow_state** | 매니페스트 optional 절. 실행 전 AI 작업의 현재 위치와 다음 행동을 기록하는 재개 포인터 | 결과 디렉토리 `progress.json` 과 다름 — workflow_state 는 벤치마크 시작 전 hand-off 용 |
 
 ---
 

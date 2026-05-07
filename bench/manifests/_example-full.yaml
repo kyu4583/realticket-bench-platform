@@ -98,18 +98,69 @@ context:
 
 # ─── 구현 계획 ────────────────────────────────────────────────────────────
 # 이 예시는 구현 완료 상태(status: completed). 실제 작성 직후에는 status: "pending".
-# 구현 세션이 tasks 완료 후 done: true + status: completed 갱신 → run.sh 실행 가능.
+# 구현 세션이 change_plan/tasks 완료 후 done: true + status: completed 갱신 → run.sh 실행 가능.
 implementation_plan:
   status: "completed"    # pending | completed
 
   gatling:
     branch: "bench/example-full"
     base:   "origin/main"
-    tasks:
+    research_summary: "기본 PARALLEL 흐름을 기준으로 두 슬롯 모두 section 이동 비교가 필요하다. 기본 4종 mode만으로는 SECTION_A/SECTION_B 의미를 분리할 수 없으므로 커스텀 mode 2개를 매니페스트 브랜치에 한정해 추가한다."
+    repo_state:
+      current_branch: "main"
+      dirty: false
+      origin_main_latest: "7126c8a 2026-01-11 chore: 결과 아카이빙 경로 세분화"
+      protected_existing_changes: []
+    scenario_decisions:
+      - slot: "baseline"
+        mode: "SECTION_B"
+        custom_required: true
+        rationale: "PARALLEL 흐름을 복사하고 section 이동 시 PATCH /booking/seat/section 경로만 유지한다."
+      - slot: "candidate"
+        mode: "SECTION_A"
+        custom_required: true
+        rationale: "PARALLEL 흐름을 복사하고 section 이동 시 SSE close + section-scoped reconnect 만 변경한다."
+    change_plan:
       - id:   G1
-        file: "src/main/java/realticket/simulation/BookingSimulation.java"
-        what: "SECTION_A / SECTION_B 케이스 추가"
+        file: "app/src/gatling/java/simulations/config/Config.java"
+        intent: "ScenarioMode enum 에 SECTION_A/SECTION_B 추가 및 scenarioMode parse 허용"
+        base_code_path: "ScenarioMode.PARALLEL"
+        preserve:
+          - "기존 -PscenarioMode 주입 경로"
+          - "기본 4종 mode 동작"
         done: true
+      - id:   G2
+        file: "app/src/gatling/java/simulations/booking/BookingSimulation.java"
+        intent: "SECTION_A/SECTION_B dispatch 를 추가하되 로그인, Plan 파싱, user injection 흐름은 PARALLEL 과 동일하게 유지"
+        base_code_path: "PARALLEL -> ParallelScenario"
+        preserve:
+          - "login flow"
+          - "Plan parsing"
+          - "user injection"
+        done: true
+      - id:   G3
+        file: "app/src/gatling/java/simulations/booking/scenario"
+        intent: "SECTION_A 는 reconnect 변형, SECTION_B 는 PATCH 변형을 최소 차이로 구현"
+        base_code_path: "ParallelScenario"
+        preserve:
+          - "booking action order"
+          - "stored test account handling"
+          - "request naming consistency for analysis"
+        done: true
+      - id:   G4
+        file: "app/src/gatling/resources/Plan.json"
+        intent: "section 이동이 포함된 deterministic Plan.json 생성"
+        base_code_path: "PlanGenerator.py + PlanConfig.json"
+        done: true
+    acceptance_checks:
+      - "python app/src/gatling/resources/PlanGenerator.py --selftest"
+      - "EFFECTIVE_CONFIG 에 scenarioMode, targetUrl, planPath 가 의도대로 출력되는지 확인"
+      - "Plan.json stats.simulation_duration_ms > 0 확인"
+      - "BookingSimulation dispatch 가 SECTION_A/SECTION_B 를 각 시나리오로 연결하는지 확인"
+    risks:
+      - "화이트리스트 밖 -P 키는 silent no-op 이므로 app/build.gradle benchPropertyKeys 밖 키를 쓰지 않는다."
+      - "커스텀 mode 가 PARALLEL 과 다른 공통 흐름을 만들면 비교 noise 가 커진다."
+      - "alpha_test_account=true 인 경우 login 액션을 보내지 않아야 한다."
 
   realticket:
     meta_branch: "bench/example-full"
@@ -135,3 +186,14 @@ implementation_plan:
       - id:   GIT3
         what: "VM SSH → pull → docker build → stack deploy"
         done: true
+
+# 실행 전 AI 작업 재개 상태. run.sh 실행 이후 진행률은 bench/results/.../progress.json 확인.
+workflow_state:
+  status: "ready_to_run"
+  active_area: "02-orchestration"
+  current_task_ref: "run.sh preflight"
+  last_completed: "implementation_plan.status completed"
+  next_action: "BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh bench/manifests/_example-full.yaml"
+  updated_at: "2026-05-07T00:00:00Z"
+  handoff_notes:
+    - "예시 파일이므로 실제 매니페스트 작성 시 manifest_id 경로로 바꾼다."

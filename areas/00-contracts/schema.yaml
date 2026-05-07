@@ -29,11 +29,13 @@
 # → Plan.json 의 stats.simulation_duration_ms 기록 → 02-orchestration 이 ceil(× 1.1) → iter_meta.per_run_ms 저장.
 # 본예매(main_booking) region 의 길이도 동일 값. 03-analysis 는 iter_meta 에서 읽음.
 #
-# Optional objects (파이프라인 미소비 포함):
+# Optional objects:
 #   +.  bench_stack           obj  ✗  4 기능 토글. 미존재 시 모두 false — base.yml 단독 deploy
 #   +.  context               obj  ✗  실험 목적·설계 결정 기록. 파이프라인 미소비 — 새 세션 컨텍스트 복원용
-#   +.  implementation_plan   obj  ✗  실행 전 구현 계획. status:pending|completed + 영역별 tasks[].
-#                                     파이프라인 미소비. status:completed 아니면 벤치마크 실행 금지
+#   +.  implementation_plan   obj  ✗  실행 전 구현 계획. status:pending|completed + 영역별 계획.
+#                                     run.sh preflight 소비. completed 아니거나 gatling research/change_plan 누락 시 실행 금지
+#   +.  workflow_state        obj  ✗  실행 전 AI 작업 재개 상태. run.sh 미소비.
+#                                     벤치마크 시작 후 진행 상태는 bench/results/.../progress.json 이 단일 진실.
 #
 # scenario_mode — 기본 4종 (Config.java 고정):
 #   DYNAMIC | STATIC | PARALLEL | LOGIN_ONLY
@@ -44,7 +46,7 @@
 # provenance rule:
 #   scenario_mode 는 Gatling -PscenarioMode 실행 계약값이므로 AI가 임의 derive하지 않는다.
 #   사용자가 명시 입력하거나 AI 제안을 사용자가 확인한 경우에만 YAML에 기록한다.
-#   미확정이면 필드 생략 + implementation_plan.gatling.tasks pending 으로 남긴다.
+#   미확정이면 필드 생략 + implementation_plan.gatling.scenario_decisions pending 으로 남긴다.
 #   _example-*.yaml 의 커스텀 mode 이름을 신규 매니페스트에 복사 금지.
 #
 # iterations·duration 상호 배타 (XOR — run.sh main 검증):
@@ -121,19 +123,39 @@ bench_stack:
 #   region_flow:     "<시나리오 단계 흐름 자연어>"
 #   plan_config:     "<PlanConfig 설정 메모 또는 기본값 확인 여부>"
 
-# implementation_plan (object, optional) — 파이프라인 미소비
+# implementation_plan (object, optional) — run.sh preflight 소비
 # 벤치마크 실행 전 완료해야 할 외부 repo 코드 변경 계획.
-# status: pending 이면 run.sh 실행 금지. 구현 세션이 tasks 완료 후 done: true + status: completed 갱신.
+# 매니페스트 작성 세션은 Gatling read-only 리서치를 기록하고, 구현 세션이 완료 후 status: completed 로 갱신.
 # implementation_plan:
 #   status: "pending"    # pending | completed
 #   gatling:
 #     branch: "bench/<manifest_id>"
 #     base:   "origin/main"
-#     tasks:
+#     research_summary: "<기본 4종 mode 충족 가능 여부 + 커스텀 필요성 판단>"
+#     repo_state:
+#       current_branch: "<read-only 확인값>"
+#       dirty: false
+#       origin_main_latest: "<short hash date subject>"
+#       protected_existing_changes: []
+#     scenario_decisions:
+#       - slot: "<slot_name>"
+#         mode: "<DYNAMIC|STATIC|PARALLEL|LOGIN_ONLY|custom>"
+#         custom_required: false
+#         rationale: "<선택 이유>"
+#     change_plan:
 #       - id:   G1
 #         file: "<path>"
-#         what: "<변경 내용>"
+#         intent: "<변경 목적>"
+#         base_code_path: "<복사/확장 기준 코드>"
+#         preserve: ["login flow", "Plan parsing", "user injection"]
 #         done: false
+#     acceptance_checks:
+#       - "PlanGenerator.py --selftest"
+#       - "EFFECTIVE_CONFIG 에 scenarioMode/planPath/targetUrl 반영 확인"
+#       - "Plan.json stats.simulation_duration_ms > 0 확인"
+#       - "BookingSimulation scenario dispatch 확인"
+#     risks:
+#       - "화이트리스트 밖 -P 키는 silent no-op"
 #   realticket:
 #     meta_branch: "bench/<manifest_id>"
 #     slot_branches:
@@ -149,3 +171,16 @@ bench_stack:
 #       - id:   GIT1
 #         what: "<push/deploy 절차>"
 #         done: false
+
+# workflow_state (object, optional) — 실행 전 AI 작업 hand-off 용
+# 새 세션은 이 블록을 먼저 읽고 current_task_ref 부터 이어서 진행한다.
+# run.sh 는 이 블록을 읽거나 갱신하지 않는다.
+# workflow_state:
+#   status: "implementing"  # drafting | implementing | blocked | ready_to_run
+#   active_area: "04-gatling-integration"
+#   current_task_ref: "implementation_plan.gatling.change_plan[G1]"
+#   last_completed: "<마지막으로 끝낸 작업>"
+#   next_action: "<새 세션에서 바로 수행할 다음 행동>"
+#   updated_at: "2026-05-07T00:00:00Z"
+#   handoff_notes:
+#     - "<주의사항 또는 막힌 이유>"

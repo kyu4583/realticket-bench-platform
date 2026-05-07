@@ -147,40 +147,42 @@ cleanup_on_exit() {
   # BENCH_ROOT, GATLING_DIR, REALTICKET_DIR, VM_HOST 는 run.sh 가 이미 export.
   export run_dir 2>/dev/null || true
 
-  if declare -f rollback_untracked_overrides >/dev/null 2>&1; then
-    timeout 30 bash -c '
-      source "$BENCH_ROOT/lib/util.sh"
-      source "$BENCH_ROOT/lib/branch.sh"
-      rollback_untracked_overrides "${run_dir:-}"
-    ' 2>/dev/null \
-      || log WARN "cleanup: rollback_untracked_overrides timed out / failed"
-  fi
-  if declare -f restore_main_branches >/dev/null 2>&1; then
-    timeout 15 bash -c '
-      source "$BENCH_ROOT/lib/util.sh"
-      source "$BENCH_ROOT/lib/branch.sh"
-      restore_main_branches
-    ' 2>/dev/null \
-      || log WARN "cleanup: restore_main_branches timed out / failed"
-  fi
+  if [[ "${cleanup_external_repos:-0}" == "1" ]]; then
+    if declare -f rollback_untracked_overrides >/dev/null 2>&1; then
+      timeout 30 bash -c '
+        source "$BENCH_ROOT/lib/util.sh"
+        source "$BENCH_ROOT/lib/branch.sh"
+        rollback_untracked_overrides "${run_dir:-}"
+      ' 2>/dev/null \
+        || log WARN "cleanup: rollback_untracked_overrides timed out / failed"
+    fi
+    if declare -f restore_main_branches >/dev/null 2>&1; then
+      timeout 15 bash -c '
+        source "$BENCH_ROOT/lib/util.sh"
+        source "$BENCH_ROOT/lib/branch.sh"
+        restore_main_branches
+      ' 2>/dev/null \
+        || log WARN "cleanup: restore_main_branches timed out / failed"
+    fi
 
-  # ─── stash 안전망 ───
-  # restore_main_branches 가 dev 로 복귀시킨 *후*에만 status 검사가 의미 있음
-  # (메타 브랜치 위에서는 워킹트리 잔존이 commit 된 상태로 보일 수 있어 false-negative).
-  # subshell + util.sh+branch.sh 두 source 는 invariant — 위배 금지.
-  # 실패는 log WARN (die 금지) — run 자체는 정상 종료.
-  if [[ -n "${REALTICKET_DIR:-}" && -d "$REALTICKET_DIR/.git" ]]; then
-    timeout 15 bash -c '
-      source "$BENCH_ROOT/lib/util.sh"
-      source "$BENCH_ROOT/lib/branch.sh"
-      if [[ -n "$(git -C "$REALTICKET_DIR" status --porcelain 2>/dev/null)" ]]; then
-        run_id="$(basename "${run_dir:-unknown}")"
-        log WARN "cleanup: RealTicket dev working tree dirty — auto-stashing as bench-cleanup-$run_id"
-        git -C "$REALTICKET_DIR" stash push -u -m "bench-cleanup-$run_id" \
-          || log WARN "cleanup: git stash push failed (manual cleanup required)"
-      fi
-    ' 2>/dev/null \
-      || log WARN "cleanup: stash safety net timed out / failed"
+    # ─── stash 안전망 ───
+    # restore_main_branches 가 dev 로 복귀시킨 *후*에만 status 검사가 의미 있음
+    # (메타 브랜치 위에서는 워킹트리 잔존이 commit 된 상태로 보일 수 있어 false-negative).
+    # subshell + util.sh+branch.sh 두 source 는 invariant — 위배 금지.
+    # 실패는 log WARN (die 금지) — run 자체는 정상 종료.
+    if [[ -n "${REALTICKET_DIR:-}" && -d "$REALTICKET_DIR/.git" ]]; then
+      timeout 15 bash -c '
+        source "$BENCH_ROOT/lib/util.sh"
+        source "$BENCH_ROOT/lib/branch.sh"
+        if [[ -n "$(git -C "$REALTICKET_DIR" status --porcelain 2>/dev/null)" ]]; then
+          run_id="$(basename "${run_dir:-unknown}")"
+          log WARN "cleanup: RealTicket dev working tree dirty — auto-stashing as bench-cleanup-$run_id"
+          git -C "$REALTICKET_DIR" stash push -u -m "bench-cleanup-$run_id" \
+            || log WARN "cleanup: git stash push failed (manual cleanup required)"
+        fi
+      ' 2>/dev/null \
+        || log WARN "cleanup: stash safety net timed out / failed"
+    fi
   fi
 
   if [[ -n "${run_dir:-}" && -d "${run_dir:-/nonexistent}" ]]; then

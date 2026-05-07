@@ -67,12 +67,12 @@ region 모델 정의는 [00-contracts/README.md](../00-contracts/README.md) § R
 
 ---
 
-## prepare_gatling_branch() 수행 순서
+## Gatling 구현 세션 수행 순서
 
 | 단계 | 명령 | 비고 |
 |------|------|------|
 | (1) 브랜치 분기 | `git -C <gatling_dir> checkout -b bench/<manifest_id> origin/main` | 이미 존재하면 `git checkout bench/<manifest_id>` |
-| (2) 코드 수정 + commit | `git -C <gatling_dir> add <files> && git commit -m "bench: <manifest_id> — <요약>"` | AI가 매니페스트 의도에 맞게 수정 |
+| (2) 코드 수정 + commit | `git -C <gatling_dir> add <files> && git commit -m "bench: <manifest_id> — <요약>"` | 매니페스트 `implementation_plan.gatling.change_plan` 순서대로 수정 |
 | (3) 실행 | `(cd <gatling_dir> && ./gradlew gatlingRunAndArchive -P...)` | 본 브랜치 체크아웃 상태 유지 |
 | (4) main 복귀 | `git -C <gatling_dir> checkout main` | 브랜치 삭제 X — 영구 보존 |
 
@@ -126,8 +126,8 @@ region 모델 정의는 [00-contracts/README.md](../00-contracts/README.md) § R
 
 매니페스트 시작 시 사용자가 region 구성과 단계 간 딜레이를 자연어로 알려주면 AI는:
 1. 위 표의 자연어 매핑에 해당하는 Config 설정으로 변환
-2. `bench/<manifest_id>` 브랜치에서 `Config.java`의 boolean = true + ms 값 설정
-3. 표에 없는 새 단계 경계의 딜레이가 필요하면 같은 브랜치에서 새 `ENABLE_WAITING_*` + `WAITING_*_MILLIS` 추가 + 시뮬레이션 코드(Static·DYNAMIC 등)에 분기 적용
+2. `implementation_plan.gatling.change_plan` 에 `Config.java` boolean = true + ms 값 변경 계획 기록
+3. 표에 없는 새 단계 경계의 딜레이가 필요하면 새 `ENABLE_WAITING_*` + `WAITING_*_MILLIS` 추가 + 시뮬레이션 코드(Static·DYNAMIC 등) 분기 적용 계획 기록
 
 ### 새 단계·새 설정 추가 절차 (매니페스트 브랜치 한정)
 
@@ -151,7 +151,7 @@ phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts
 ## bench_stack ↔ Gatling 연동 규칙
 
 매니페스트의 `bench_stack` 토글이 활성화되면 Gatling 코드에도 대응 변경이 필요하다.
-**bench_stack 토글 확인은 매니페스트 시작 시 Gatling 브랜치 작업 전에 반드시 수행한다.**
+**bench_stack 토글 확인은 매니페스트 작성 세션의 Gatling read-only 리서치 때 반드시 수행하고, 실제 변경은 구현 세션에서 수행한다.**
 
 | 토글 | Gatling 코드 의무 변경 |
 |------|----------------------|
@@ -184,16 +184,23 @@ phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts
 
 ### AI가 수행하는 행동
 
-**매니페스트 시작 시:**
-1. gatling repo 현재 상태 확인 (`git -C <dir> status --porcelain`)
-2. `bench/<manifest_id>` 브랜치 분기
-3. 각 슬롯의 동작을 기본 4종으로 충족할 수 있는지 슬롯별로 독립 판단:
+**매니페스트 작성 세션 (read-only):**
+1. gatling repo 현재 상태 확인 (`git -C <dir> status --porcelain`, 현재 브랜치, `origin/main` 최신 커밋)
+2. 관련 파일을 읽어 각 슬롯의 동작을 기본 4종으로 충족할 수 있는지 슬롯별로 독립 판단:
    - 기본 4종으로 충분한 슬롯 → 해당 mode 그대로 사용
-   - 기본 4종으로 부족한 슬롯 → 해당 슬롯만 커스텀 모드 구현 (위 원칙 적용)
+   - 기본 4종으로 부족한 슬롯 → 해당 슬롯만 커스텀 모드 구현 계획 작성 (위 원칙 적용)
    - 두 슬롯 모두 커스텀이 필요할 수도, 하나만 필요할 수도 있음
-4. 매니페스트 의도에 맞는 코드 변경 (PlanConfig.json, -P 키 등)
-5. PlanGenerator 실행 → Plan.json 생성
-6. commit + origin push
+3. `implementation_plan.gatling` 에 `research_summary`, `repo_state`, `scenario_decisions`, `change_plan`, `acceptance_checks`, `risks` 를 기록
+4. 외부 Gatling repo 파일 수정, 브랜치 분기, PlanGenerator 실행, commit, push 금지
+
+**구현 세션:**
+1. `implementation_plan.gatling.change_plan` 을 읽고 `bench/<manifest_id>` 브랜치 분기
+2. 매니페스트 의도에 맞는 코드 변경 (ScenarioMode, Config.java, PlanConfig/PlanGenerator 입력 등)
+3. PlanGenerator 실행 → Plan.json 생성
+4. acceptance_checks 수행
+5. commit + origin push
+6. 매니페스트의 `implementation_plan.gatling.change_plan[].done` 과 `workflow_state` 갱신
+7. Gatling 쪽 작업이 모두 끝나면 다음 미완료 RealTicket/git 작업을 `workflow_state.current_task_ref` 와 `next_action` 에 기록한다. 전체 실행 전 작업이 끝났을 때만 최상위 `implementation_plan.status: completed` 로 갱신
 
 **매니페스트 실행 중:**
 - 본 브랜치 체크아웃 상태 유지 + `./gradlew gatlingRunAndArchive -P<keys>` 호출

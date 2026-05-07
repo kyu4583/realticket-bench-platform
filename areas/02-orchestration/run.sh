@@ -31,6 +31,7 @@ main() {
   [[ -n "$manifest" && -f "$manifest" ]] || die "Usage: bash areas/02-orchestration/run.sh <manifest.yaml>"
   # cleanup_on_exit 가 참조하는 변수 — 명시적 declare -g (set -u 안전)
   declare -g run_dir="" current_iter="" current_slot=""
+  declare -g cleanup_external_repos=0
   check_deps
 
   # .env source (있으면)
@@ -53,6 +54,26 @@ main() {
   [[ "$run_id_prefix" == "null" || -z "$run_id_prefix" ]] && run_id_prefix="$MANIFEST_ID"
   [[ "$run_id_prefix" =~ ^[A-Za-z0-9_-]+$ ]] \
     || die "run_id_prefix 가 [A-Za-z0-9_-]+ 패턴 위반: $run_id_prefix"
+
+  # 실행 전 구현 품질 gate:
+  # 매니페스트 작성 세션은 Gatling read-only 리서치 + 구현 계획 기록만 수행하고,
+  # 구현 세션이 완료 표시를 남긴 뒤에만 실제 벤치마크를 실행한다.
+  local impl_status gatling_research gatling_change_count
+  impl_status=$(manifest_yq 'implementation_plan.status' "$manifest")
+  [[ "$impl_status" == "completed" ]] \
+    || die "implementation_plan.status must be completed before execution (got: ${impl_status:-missing})"
+  gatling_research=$(manifest_yq 'implementation_plan.gatling.research_summary' "$manifest")
+  [[ "$gatling_research" != "null" && -n "$gatling_research" ]] \
+    || die "implementation_plan.gatling.research_summary is required before execution"
+  gatling_change_count=$(manifest_yq 'implementation_plan.gatling.change_plan | length' "$manifest")
+  if ! [[ "$gatling_change_count" =~ ^[0-9]+$ ]] || (( gatling_change_count < 1 )); then
+    die "implementation_plan.gatling.change_plan must contain at least one planned change before execution"
+  fi
+  if [[ "${BENCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
+    log INFO "preflight passed for manifest_id=$MANIFEST_ID"
+    return 0
+  fi
+
   run_id="${run_id_prefix}-${utc_ts}"
   manifest_results_dir="$REPO_ROOT/bench/results/$MANIFEST_ID"
   run_dir="$manifest_results_dir/$run_id"
@@ -99,6 +120,7 @@ main() {
   done
 
   # 매니페스트 ID 브랜치 lifecycle
+  cleanup_external_repos=1
   prepare_gatling_branch "$MANIFEST_ID"
   # shellcheck disable=SC2086
   prepare_realticket_branches "$MANIFEST_ID" $slot_names

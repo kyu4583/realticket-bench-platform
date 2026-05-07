@@ -45,10 +45,11 @@
 
 본 플랫폼은 **AI가 단일 제어 평면**으로 벤치마크를 지휘한다. 사용자는 자연어 명령 한 번으로 전체 흐름이 완성된다.
 
-**매니페스트 시작 트리거:** 사용자가 "매니페스트 시작하자" 또는 동등 자연어 → **반드시 [areas/01-planning/README.md § 매니페스트 수집 흐름 9단계](areas/01-planning/README.md) + § AI 자동 derive 항목** 을 먼저 읽고 그 순서대로 수집 → 자동 생성. schema 단일 진실은 [areas/00-contracts/README.md § Manifest Schema](areas/00-contracts/README.md) (15 core fields + optional bench_stack).
+**매니페스트 시작 트리거:** 사용자가 "매니페스트 시작하자" 또는 동등 자연어 → **반드시 [areas/01-planning/README.md § 매니페스트 수집 흐름 9단계](areas/01-planning/README.md) + § AI 자동 derive 항목 + § 실행 전 재개 상태 운영** 을 먼저 읽고 그 순서대로 수집 → 자동 생성. schema 단일 진실은 [areas/00-contracts/README.md § Manifest Schema](areas/00-contracts/README.md) (15 core fields + optional bench_stack/context/implementation_plan/workflow_state).
 
 **AI가 자동 수행하는 것 (사람 개입 0):**
 1. 매니페스트 YAML 생성 (`bench/manifests/<id>.yaml`)
+   - 실행 전 구현/브랜치 작업 중에는 매니페스트 `workflow_state` 를 갱신하여 새 세션 재개 포인터 유지
 2. docker stack 정의 생성 (`bench-stack/<id>.yml`) — 4 기능 토글 활성 조합 yq merge
 3. gatling repo 브랜치 분기·코드 수정·commit·push (`bench/<id>`)
 4. RealTicket repo 브랜치 분기·yml commit·push (메타·슬롯 브랜치)

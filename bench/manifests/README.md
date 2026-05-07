@@ -8,11 +8,11 @@
 
 schema 정의와 작성 가이드의 단일 진실은 영역 문서에 lock — 본 README 는 *link O · 재진술 X*.
 
-- Manifest Schema (16 core fields + optional `bench_stack`): [`areas/00-contracts/README.md`](../../areas/00-contracts/README.md) — core fields enumeration · 타입 · required · 의미 단일 진실
+- Manifest Schema (15 core fields + optional objects): [`areas/00-contracts/README.md`](../../areas/00-contracts/README.md) — core fields enumeration · 타입 · required · 의미 단일 진실
 - 매니페스트 작성 가이드: [`areas/01-planning/README.md`](../../areas/01-planning/README.md) — scenario 설계 원칙 + α/β/γ 질문 흐름
 - `slots[].scenario_mode` override: [`areas/04-gatling-integration/README.md`](../../areas/04-gatling-integration/README.md) — `Config.java` default `LOGIN_ONLY` + 6 enum
 
-> **Example quarantine:** `_example-*.yaml` 의 커스텀 `scenario_mode` 값은 schema 시연용 placeholder다. 신규 매니페스트 작성 시 복사하지 않는다. 실제 `slots[].scenario_mode` 값은 사용자가 명시 입력하거나 AI 제안을 사용자가 확인한 경우에만 기록한다. 미확정이면 필드를 생략하고 `implementation_plan` 에 pending task로 남긴다.
+> **Example quarantine:** `_example-*.yaml` 의 커스텀 `scenario_mode` 값은 schema 시연용 placeholder다. 신규 매니페스트 작성 시 복사하지 않는다. 실제 `slots[].scenario_mode` 값은 사용자가 명시 입력하거나 AI 제안을 사용자가 확인한 경우에만 기록한다. 미확정이면 필드를 생략하고 `implementation_plan.gatling.scenario_decisions` 에 pending 결정으로 남긴다.
 
 ## 디렉토리 구조
 
@@ -32,8 +32,11 @@ schema의 기계 가독 placeholder는 `areas/00-contracts/schema.yaml`에 둔�
 1. `areas/01-planning/README.md § Scenario 설계 원칙` 의 결정 순서를 사용자에게 질문 (AI 가 진행)
 2. 답변에서 `manifest_id` derive (명명 규칙: 영문자·숫자·하이픈·언더스코어)
 3. α/β/γ/δ 차원 질문 → bench-stack yml 변형 결정
-4. `bench/manifests/<manifest_id>.yaml` 생성 (16 core fields + optional `bench_stack`)
-5. `bash areas/02-orchestration/run.sh bench/manifests/<manifest_id>.yaml` 실행
+4. `bench/manifests/<manifest_id>.yaml` 생성 (15 core fields + optional `bench_stack`·`context`·`implementation_plan`·`workflow_state`)
+5. 구현 세션마다 `workflow_state` 의 `current_task_ref`·`last_completed`·`next_action` 갱신
+6. `workflow_state.status: ready_to_run` 이 되면 `bash areas/02-orchestration/run.sh bench/manifests/<manifest_id>.yaml` 실행
+
+`workflow_state` 는 실행 전 재개 포인터다. `run.sh` 실행 이후의 진행률은 매니페스트가 아니라 `bench/results/<manifest_id>/<run_id>/progress.json` 과 마커 파일을 확인한다.
 
 ## Out of Scope
 

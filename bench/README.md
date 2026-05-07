@@ -25,6 +25,9 @@ bench/
 ## 사용
 
 ```bash
+# 실행 전 작업 재개 포인터 확인
+yq '.workflow_state' bench/manifests/<manifest>.yaml
+
 # 실행
 bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 

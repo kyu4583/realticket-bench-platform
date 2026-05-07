@@ -1,0 +1,195 @@
+manifest_id: sse-reconnect-vs-patch
+run_id_prefix: sse-reconnect-vs-patch
+duration: 20m
+warmup: 30s
+cooldown: 30s
+max_failures: 2
+plan_path: app/src/gatling/resources/Plan.json
+prom_url: http://192.168.138.2:9090
+prom_step: 15s
+reset_path: /booking/init/:eventId
+event_ids: [1]
+
+slots:
+  - name: baseline
+    targetUrl: http://192.168.138.2:8080
+    image_tag: nest:sse-reconnect-vs-patch-baseline
+    scenario_mode: PARALLEL
+    source_branch: bench/sse-reconnect-vs-patch/baseline
+  - name: candidate
+    targetUrl: http://192.168.138.2:8081
+    image_tag: nest:sse-reconnect-vs-patch-candidate
+    scenario_mode: SSE_RECONNECT
+    source_branch: bench/sse-reconnect-vs-patch/candidate
+
+bench_stack:
+  alpha_test_account: true
+  beta_dual_slots: true
+  gamma_sentinel: false
+  delta_autoscaler: false
+
+queries:
+  - name: http_request_rate
+    promql: 'rate(http_requests_total[1m])'
+    unit: req/s
+  - name: http_error_rate
+    promql: 'rate(http_requests_total{status=~"5.."}[1m])'
+    unit: req/s
+  - name: node_cpu
+    promql: 'rate(process_cpu_seconds_total[1m])'
+    unit: "%"
+  - name: node_memory
+    promql: 'process_resident_memory_bytes'
+    unit: bytes
+  - name: event_loop_lag
+    promql: 'nodejs_eventloop_lag_seconds'
+    unit: seconds
+  - name: gc_duration
+    promql: 'rate(nodejs_gc_duration_seconds_sum[1m])'
+    unit: seconds
+
+context:
+  comparison_variable: >
+    SSE 구조 비교.
+    baseline = SSE 1회 연결 유지 + PATCH /booking/seat/section 으로 section 구독 변경.
+    candidate = SSE 연결 시 section 지정(?section=N), section 이동 시 SSE 해제 및 재연결.
+  slots:
+    baseline: "bench/sse-reconnect-vs-patch/baseline — SSE 1회 유지 + PATCH 구독 변경"
+    candidate: "bench/sse-reconnect-vs-patch/candidate — SSE section 지정 + 재연결"
+  region_flow:
+    - step: 입장 권한 확인
+    - wait: 50s
+    - step: 구독
+    - step: 본예매 (구독 직후, 추가 대기 없음)
+  plan_config_notes:
+    - "ENABLE_WAITING_BEFORE_SUBS=true, WAITING_BEFORE_SUBS_MILLIS=50000 (권한확인→구독 50s 대기)"
+    - "ENABLE_WAITING_AFTER_SUBS=false (구독→본예매 대기 없음)"
+    - "TEST_ACCOUNT_ALREADY_STORED=true (alpha_test_account 활성 — 로그인 액션 생략)"
+
+workflow_state:
+  status: ready_to_run
+  active_area: "02-orchestration"
+  current_task_ref: "run.sh 실행"
+  last_completed: "acceptance check 3~6 통과 + build.gradle -P injection 수정 (3091fd2) + push"
+  next_action: "bash areas/02-orchestration/run.sh bench/manifests/sse-reconnect-vs-patch.yaml"
+  updated_at: "2026-05-07T10:45:00Z"
+  handoff_notes:
+    - "acceptance check 1~6 전부 통과. preflight 통과. build.gradle fix (GatlingRunTask JavaExec 미상속 → gatling{} 블록 직접 포워딩) commit 3091fd2"
+    - "run.sh 시작 후 진행률은 bench/results/<manifest_id>/<run_id>/progress.json 확인"
+
+implementation_plan:
+  status: completed
+  commit: "73609cb bench(sse-reconnect-vs-patch): SSE_RECONNECT 모드 구현"
+  gatling:
+    branch: bench/sse-reconnect-vs-patch
+    base: origin/main
+    research_summary: >
+      PARALLEL 모드는 이미 구현되어 있어 baseline 슬롯에 그대로 사용 가능.
+      SSE_RECONNECT 모드는 신규 구현 필요: ParallelScenario를 베이스로, section 이동 시
+      PATCH 대신 SSE close + 재연결(GET /booking/seat/:eventId?section=N)로 교체.
+      Config.java -P injection이 현재 미구현 — bench 브랜치에서 scenarioMode·targetUrl을
+      System.getProperty로 읽도록 추가 필요. build.gradle에 -P→JVM -D 포워딩도 추가.
+      TEST_ACCOUNT_ALREADY_STORED는 -P 화이트리스트 외 → bench 브랜치 하드코딩(true).
+    repo_state:
+      current_branch: main
+      dirty: false
+      origin_main_latest: "8fb02ed4 2026-05-07 fix: ParallelScenario 무한 대기 버그 수정"
+      protected_existing_changes: []
+    scenario_decisions:
+      - slot: baseline
+        mode: PARALLEL
+        custom_required: false
+        rationale: "SSE 1회 유지 + PATCH section 전환 = 기존 ParallelScenario 흐름과 일치"
+      - slot: candidate
+        mode: SSE_RECONNECT
+        custom_required: true
+        rationale: >
+          section 이동 시 SSE close+재연결 필요. ParallelScenario의 PATCH 전환 로직만
+          SSE 재연결로 교체 — 로그인 생략·Plan 파싱·사용자 주입·rendezVous sync는 동일 유지.
+    change_plan:
+      - id: G1
+        file: app/src/gatling/java/simulations/config/Config.java
+        intent: >
+          -P injection 추가: scenarioMode·targetUrl을 System.getProperty로 읽기.
+          SSE_RECONNECT를 ScenarioMode enum에 추가.
+          TEST_ACCOUNT_ALREADY_STORED=true 하드코딩.
+          ENABLE_WAITING_BEFORE_SUBS=true, WAITING_BEFORE_SUBS_MILLIS=50000.
+        base_code_path: app/src/gatling/java/simulations/config/Config.java
+        preserve:
+          - 기존 enum 값(DYNAMIC, STATIC, PARALLEL)
+          - 기존 모든 Config 필드
+        done: true
+      - id: G2
+        file: app/build.gradle
+        intent: >
+          gatlingRun task에 benchPropertyKeys whitelist 정의 후
+          -P → JVM -D 시스템 프로퍼티 포워딩 추가.
+          포워딩 대상: scenarioMode, targetUrl, planPath, targetEvent,
+          dynamicUserCount, fixedBookingAmount, maxRetryInBookingConflict, subscriptionType.
+        base_code_path: app/build.gradle
+        preserve:
+          - 기존 gatlingRunAndArchive task
+          - 기존 jvmArgs 목록
+        done: true
+      - id: G3
+        file: app/src/gatling/java/simulations/booking/BookingSimulation.java
+        intent: "createScenarioExecutor() switch에 SSE_RECONNECT → new SseReconnectScenario() case 추가"
+        base_code_path: app/src/gatling/java/simulations/booking/BookingSimulation.java
+        preserve:
+          - 기존 DYNAMIC·STATIC·PARALLEL case
+        done: true
+      - id: G4
+        file: app/src/gatling/java/simulations/booking/subscription/SubscriptionHandler.java
+        intent: >
+          subscribeWithSection(int targetEvent, int section) default method 추가.
+          기본 구현: subscribe(targetEvent) 위임 (기존 핸들러 하위호환).
+        base_code_path: app/src/gatling/java/simulations/booking/subscription/SubscriptionHandler.java
+        preserve:
+          - subscribe, reloadSeatStatus, close, parseSeatStatus
+        done: true
+      - id: G5
+        file: app/src/gatling/java/simulations/booking/subscription/SseHandler.java
+        intent: >
+          subscribeWithSection override 구현.
+          GET /booking/seat/:eventId?section=<section> 로 section 지정 SSE 연결.
+          주의: section 미지정 시 init pool 등록 → 좌석 데이터 미수신 함정 회피 필수.
+        base_code_path: app/src/gatling/java/simulations/booking/subscription/SseHandler.java
+        preserve:
+          - 기존 subscribe(section 없이), reloadSeatStatus, close
+        done: true
+      - id: G6
+        file: app/src/gatling/java/simulations/booking/scenario/SseReconnectScenario.java
+        intent: >
+          ParallelScenario를 베이스로 신규 생성 (SSE_RECONNECT 모드 구현체).
+          sendPlannedRequest()의 SECTION_MOVE 처리를 PATCH 대신
+          SSE close + subscribeWithSection(targetEvent, reqTargetSection) + SSE 메시지 대기로 교체.
+          login 생략(TEST_ACCOUNT_ALREADY_STORED=true), Plan 파싱·사용자 주입·rendezVous sync는 동일.
+        base_code_path: app/src/gatling/java/simulations/booking/scenario/ParallelScenario.java
+        preserve:
+          - loginAndStoreSession flow
+          - Plan parsing and user injection
+          - requestReadyCount / rendezVous synchronization
+          - BOOK request handling
+        done: true
+    acceptance_checks:
+      - "PlanGenerator.py --selftest 3케이스 통과"
+      - "Plan.json stats.simulation_duration_ms > 0 확인"
+      - "./gradlew gatlingRun -PscenarioMode=PARALLEL -PtargetUrl=192.168.138.2:8080 → 콘솔 '=== Bench -P injection ===' + EFFECTIVE_CONFIG에 PARALLEL·8080 반영 확인"
+      - "./gradlew gatlingRun -PscenarioMode=SSE_RECONNECT -PtargetUrl=192.168.138.2:8081 → 콘솔 SSE_RECONNECT 모드 출력 확인"
+      - "SSE_RECONNECT 시나리오: section move 시 SSE close 후 GET /booking/seat/:eventId?section=N 재연결 요청 로그 확인"
+      - "alpha_test_account=true 확인: login 요청(/user/login) 미발생"
+    risks:
+      - "화이트리스트 밖 -P 키는 silent no-op — build.gradle 포워딩 구현 후 EFFECTIVE_CONFIG 콘솔 출력으로 반드시 검증"
+      - "SSE 재연결 후 좌석 데이터 수신 타이밍 — reloadSeatStatus() 전 SSE 메시지 버퍼 도착 대기 필요"
+      - "candidate 엔드포인트 함정: GET /booking/seat/:eventId (section 미지정) → init pool 등록, 좌석 데이터 미전송 — subscribeWithSection 반드시 section 파라미터 포함"
+  realticket:
+    notes: "baseline·candidate·meta 브랜치 모두 origin에 이미 존재. 신규 브랜치 생성 불필요."
+    source_branches_confirmed:
+      baseline: bench/sse-reconnect-vs-patch/baseline
+      candidate: bench/sse-reconnect-vs-patch/candidate
+      meta: bench/sse-reconnect-vs-patch/meta
+  git:
+    gatling_branch: bench/sse-reconnect-vs-patch
+    gatling_base: origin/main
+    realticket_meta_branch: bench/sse-reconnect-vs-patch/meta
+    notes: "Gatling 브랜치 신규 생성 필요(origin/main 기점). RealTicket 브랜치는 이미 존재 — checkout만."

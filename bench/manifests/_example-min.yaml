@@ -39,3 +39,46 @@ slots:
     targetUrl:      "http://192.168.138.2:8080"
     image_tag:      "nest:example-min"
     # scenario_mode 미정의 → Config.java default LOGIN_ONLY
+
+implementation_plan:
+  status: "completed"
+  gatling:
+    branch: "bench/example-min"
+    base: "origin/main"
+    research_summary: "단일 슬롯 LOGIN_ONLY 기본 동작 검증용 매니페스트다. 기본 4종 mode 중 Config.java default LOGIN_ONLY 로 충분하며 커스텀 mode 는 필요 없다."
+    repo_state:
+      current_branch: "main"
+      dirty: false
+      origin_main_latest: "7126c8a 2026-01-11 chore: 결과 아카이빙 경로 세분화"
+      protected_existing_changes: []
+    scenario_decisions:
+      - slot: "baseline"
+        mode: "LOGIN_ONLY"
+        custom_required: false
+        rationale: "파이프라인 smoke 검증 목적이라 기본 LOGIN_ONLY 로 충분하다."
+    change_plan:
+      - id: "G1"
+        file: "app/src/gatling/resources/Plan.json"
+        intent: "기본 Plan.json 존재와 stats.simulation_duration_ms > 0 확인"
+        base_code_path: "PlanGenerator.py + PlanConfig.json"
+        preserve:
+          - "기본 LOGIN_ONLY scenario dispatch"
+          - "기존 -P whitelist"
+        done: true
+    acceptance_checks:
+      - "python app/src/gatling/resources/PlanGenerator.py --selftest"
+      - "Plan.json stats.simulation_duration_ms > 0 확인"
+      - "EFFECTIVE_CONFIG 에 planPath/targetUrl 출력 확인"
+    risks:
+      - "scenario_mode 를 생략하므로 Config.java default 가 의도와 다르면 smoke 성격이 달라진다."
+
+# 실행 전 AI 작업 재개 상태. run.sh 실행 이후 진행률은 bench/results/.../progress.json 확인.
+workflow_state:
+  status: "ready_to_run"
+  active_area: "02-orchestration"
+  current_task_ref: "run.sh preflight"
+  last_completed: "implementation_plan.status completed"
+  next_action: "BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh bench/manifests/_example-min.yaml"
+  updated_at: "2026-05-07T00:00:00Z"
+  handoff_notes:
+    - "예시 파일이므로 실제 매니페스트 작성 시 manifest_id 경로로 바꾼다."
