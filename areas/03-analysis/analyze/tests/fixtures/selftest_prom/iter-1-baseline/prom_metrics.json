@@ -1,0 +1,24 @@
+{
+  "http_request_rate": {
+    "_iter_total": {
+      "mean": 12.02,
+      "max": 13.0,
+      "count": 5
+    },
+    "auth_check": {
+      "mean": 10.5,
+      "max": 10.5,
+      "count": 1
+    },
+    "subscribe": {
+      "mean": 12.3,
+      "max": 12.3,
+      "count": 1
+    },
+    "main_booking": {
+      "mean": 12.4,
+      "max": 13.0,
+      "count": 2
+    }
+  }
+}

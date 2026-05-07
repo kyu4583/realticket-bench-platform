@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""summarize.py — regions × queries cross product + 가설 판정.
+"""summarize.py — slot × request_type 레이턴시 + slot × phase × Prometheus 표 + 가설 판정.
 
 Source: areas/03-analysis/README.md § 3 모듈 spec
 """
@@ -15,7 +15,6 @@ def _median_or_none(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
-# eval() 제거 — RCE 차단. AST whitelist 만 평가.
 _ALLOWED_BIN = {ast.Add: _op.add, ast.Sub: _op.sub, ast.Mult: _op.mul, ast.Div: _op.truediv}
 _ALLOWED_UNARY = {ast.USub: _op.neg, ast.UAdd: _op.pos}
 
@@ -38,7 +37,6 @@ def _safe_arith(expr: str, allowed: dict) -> float:
 
 
 def _build_hypothesis_table(hypotheses: list[dict], slot_metrics: dict) -> list[str]:
-    """간단한 가설 판정 — compare 문자열을 _safe_arith (AST) 로 평가, eval 사용 X."""
     lines = ["", "## 가설 판정", "", "| ID | metric | compare | baseline | candidate | result |", "|----|--------|---------|----------|-----------|--------|"]
     for h in hypotheses:
         metric = h["metric"]
@@ -48,10 +46,8 @@ def _build_hypothesis_table(hypotheses: list[dict], slot_metrics: dict) -> list[
         if baseline is None or candidate is None:
             lines.append(f"| {h['id']} | {metric} | {compare} | - | - | SKIP (missing data) |")
             continue
-        # compare 형식: "candidate < baseline * 0.95" 또는 "candidate <= baseline * 1.10"
         try:
             allowed = {"baseline": baseline, "candidate": candidate}
-            # 보안: eval 대신 _safe_arith — '<' '<=' '>' '>=' 만 지원, 산술은 AST whitelist
             for op in (" <= ", " >= ", " < ", " > "):
                 if op in compare:
                     lhs, rhs = compare.split(op, 1)
@@ -68,11 +64,51 @@ def _build_hypothesis_table(hypotheses: list[dict], slot_metrics: dict) -> list[
     return lines
 
 
-def summarize_run(run_dir: str) -> str:
-    """run_dir 의 iter-*-{slot}/stats.json + prom_*.json + manifest.hypotheses → SUMMARY.md.
+def _build_prom_phase_table(slot_phase_query: dict[str, dict[str, dict[str, list[float]]]]) -> list[str]:
+    """slot × phase × query 평균(median across iters) 표 생성.
 
-    FAILED 마커 디렉토리 제외, median 집계.
-    hypotheses 미존재 시 가설 섹션 생략.
+    phase 정렬: _iter_total 을 맨 위, 나머지 알파벳순.
+    """
+    if not slot_phase_query:
+        return []
+
+    all_queries: set[str] = set()
+    for slot_data in slot_phase_query.values():
+        for phase_data in slot_data.values():
+            all_queries.update(phase_data.keys())
+    sorted_queries = sorted(all_queries)
+    if not sorted_queries:
+        return []
+
+    lines = ["", "## slot × phase × Prometheus 메트릭 (mean median across iters)", ""]
+    header = "| slot | phase | " + " | ".join(sorted_queries) + " |"
+    sep = "|------|-------|" + "|".join(["-----"] * len(sorted_queries)) + "|"
+    lines.append(header)
+    lines.append(sep)
+
+    def _phase_sort_key(p: str) -> tuple[int, str]:
+        # _iter_total 우선, 나머지 알파벳순
+        return (0, "") if p == "_iter_total" else (1, p)
+
+    for slot in sorted(slot_phase_query.keys()):
+        phases_in_slot = sorted(slot_phase_query[slot].keys(), key=_phase_sort_key)
+        for phase in phases_in_slot:
+            row = [slot, phase]
+            for q in sorted_queries:
+                vals = slot_phase_query[slot][phase].get(q, [])
+                med = _median_or_none(vals)
+                row.append(f"{med:.2f}" if med is not None else "-")
+            lines.append("| " + " | ".join(row) + " |")
+    return lines
+
+
+def summarize_run(run_dir: str) -> str:
+    """run_dir 의 iter-*-{slot}/stats.json + iter-*-{slot}/prom_metrics.json → SUMMARY.md.
+
+    출력 섹션:
+      1. slot × request_type 레이턴시 (stats.json — request_name 키)
+      2. slot × phase × Prometheus 메트릭 (prom_metrics.json — phase 별 mean median)
+      3. 가설 판정 (manifest hypotheses 존재 시)
     """
     try:
         import yaml
@@ -83,7 +119,6 @@ def summarize_run(run_dir: str) -> str:
     if not run_p.exists():
         return f"ERROR: run_dir not found: {run_dir}"
 
-    # 매니페스트 (있으면)
     manifest_files = sorted(run_p.glob("manifest.yaml")) or sorted(run_p.parent.glob("*.yaml"))
     hypotheses: list[dict] = []
     manifest_id = run_p.name
@@ -93,45 +128,83 @@ def summarize_run(run_dir: str) -> str:
         hypotheses = manifest.get("hypotheses", []) or []
         manifest_id = manifest.get("manifest_id", run_p.name)
 
-    # iter-*-{slot} 수집 (FAILED 디렉토리 제외 — 본 plan 에선 단순화: FAILED 마커 파일 검사)
     iter_dirs = [d for d in run_p.iterdir() if d.is_dir() and d.name.startswith("iter-")]
-    # slot × region × query 집계
-    slot_region_query: dict[str, dict[str, dict[str, list[float]]]] = {}
+
+    # slot × request_type 레이턴시 집계 (stats.json)
+    slot_reqtype: dict[str, dict[str, dict[str, list[float]]]] = {}
+    # slot × phase × query 집계 (prom_metrics.json)
+    slot_phase_query: dict[str, dict[str, dict[str, list[float]]]] = {}
     slot_metrics: dict[str, dict[str, float]] = {}
+
     for d in iter_dirs:
-        # slot 추출 (iter-N-<slot>)
         parts = d.name.split("-", 2)
         slot = parts[2] if len(parts) >= 3 else "?"
-        stats_p = d / "stats.json"
-        if stats_p.exists():
-            with stats_p.open("r", encoding="utf-8") as f:
-                stats = json.load(f)
-            for region, m in stats.items():
-                bucket = slot_region_query.setdefault(slot, {}).setdefault(region, {})
-                bucket.setdefault("p50", []).append(m.get("p50", 0))
-                bucket.setdefault("p99", []).append(m.get("p99", 0))
-                bucket.setdefault("failure_rate", []).append(m.get("failure_rate", 0))
-        # 슬롯 별 단순 집계 (가설 metric 키)
         slot_metrics.setdefault(slot, {})
 
-    # SUMMARY.md 생성
-    lines = [f"# SUMMARY — {manifest_id}", "", f"- Run dir: `{run_dir}`", f"- Iter dirs: {len(iter_dirs)}", "", "## regions × queries cross product", ""]
-    if not slot_region_query:
+        stats_p = d / "stats.json"
+        if stats_p.exists():
+            try:
+                with stats_p.open("r", encoding="utf-8") as f:
+                    stats = json.load(f)
+                for req_type, m in stats.items():
+                    if not isinstance(m, dict):
+                        continue
+                    bucket = slot_reqtype.setdefault(slot, {}).setdefault(req_type, {})
+                    bucket.setdefault("p50", []).append(m.get("p50", 0))
+                    bucket.setdefault("p99", []).append(m.get("p99", 0))
+                    bucket.setdefault("failure_rate", []).append(m.get("failure_rate", 0))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        prom_p = d / "prom_metrics.json"
+        if prom_p.exists():
+            try:
+                with prom_p.open("r", encoding="utf-8") as f:
+                    prom_data = json.load(f)
+                # prom_data: {q_name: {phase_name: {mean, max, count}}}
+                for q_name, phase_dict in prom_data.items():
+                    if not isinstance(phase_dict, dict):
+                        continue
+                    for phase_name, m in phase_dict.items():
+                        if not isinstance(m, dict):
+                            continue
+                        mean = m.get("mean")
+                        if mean is None:
+                            continue
+                        bucket = slot_phase_query.setdefault(slot, {}).setdefault(phase_name, {}).setdefault(q_name, [])
+                        bucket.append(mean)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    lines = [
+        f"# SUMMARY — {manifest_id}",
+        "",
+        f"- Run dir: `{run_dir}`",
+        f"- Iter dirs: {len(iter_dirs)}",
+        "",
+        "## slot × request_type 레이턴시",
+        "",
+    ]
+    if not slot_reqtype:
         lines.append("_(no iter directories with stats.json)_")
     else:
-        lines.append("| slot | region | p50 (median) | p99 (median) | failure_rate (median) |")
-        lines.append("|------|--------|--------------|--------------|----------------------|")
-        for slot, regions in sorted(slot_region_query.items()):
-            for region, metrics in sorted(regions.items()):
+        lines.append("| slot | request_type | p50 (median) | p99 (median) | failure_rate (median) |")
+        lines.append("|------|-------------|--------------|--------------|----------------------|")
+        for slot, req_types in sorted(slot_reqtype.items()):
+            for req_type, metrics in sorted(req_types.items()):
                 p50_m = _median_or_none(metrics.get("p50", []))
                 p99_m = _median_or_none(metrics.get("p99", []))
                 fr_m = _median_or_none(metrics.get("failure_rate", []))
                 p50_s = f"{p50_m:.1f}" if p50_m is not None else "-"
                 p99_s = f"{p99_m:.1f}" if p99_m is not None else "-"
                 fr_s = f"{fr_m:.3f}" if fr_m is not None else "-"
-                lines.append(f"| {slot} | {region} | {p50_s} | {p99_s} | {fr_s} |")
+                lines.append(f"| {slot} | {req_type} | {p50_s} | {p99_s} | {fr_s} |")
 
-    # 가설 섹션 (hypotheses 미존재 시 생략)
+    # phase × Prometheus 표 (prom_metrics.json 가 있는 iter 가 1개 이상이면)
+    prom_lines = _build_prom_phase_table(slot_phase_query)
+    if prom_lines:
+        lines.extend(prom_lines)
+
     if hypotheses:
         lines.extend(_build_hypothesis_table(hypotheses, slot_metrics))
 
@@ -145,37 +218,49 @@ def summarize_run(run_dir: str) -> str:
 
 
 def _selftest() -> int:
-    # fixture 로 합성 run_dir 시뮬레이션 — bench/analyze/tests/fixtures/ 자체를 run_dir 로
-    # iter-1-baseline 디렉토리 합성
     run_dir = FIXTURES_DIR / "selftest_run"
     run_dir.mkdir(exist_ok=True)
     iter_dir = run_dir / "iter-1-baseline"
     iter_dir.mkdir(exist_ok=True)
-    # stats.json 합성
-    stats = {"booking": {"p50": 50.0, "p75": 75.0, "p95": 95.0, "p99": 99.0, "ok": 100, "ko": 5, "failure_rate": 0.05}}
+    # stats.json — request_name 키
+    stats = {"좌석 점유": {"p50": 50.0, "p75": 75.0, "p95": 95.0, "p99": 99.0, "ok": 100, "ko": 0, "failure_rate": 0.0}}
     (iter_dir / "stats.json").write_text(json.dumps(stats), encoding="utf-8")
-    # hypotheses 없음 — 가설 섹션 미생성 검증
+    # prom_metrics.json — _iter_total + main_booking phase
+    prom = {
+        "http_request_rate": {
+            "_iter_total":  {"mean": 12.02, "max": 13.0, "count": 5},
+            "main_booking": {"mean": 12.50, "max": 13.0, "count": 3},
+        }
+    }
+    (iter_dir / "prom_metrics.json").write_text(json.dumps(prom), encoding="utf-8")
+
     result = summarize_run(str(run_dir))
     if "ERROR" in result.split("\n")[0]:
         print(f"FAIL: summarize_run error: {result}", file=sys.stderr)
         return 1
     summary_md = (run_dir / "SUMMARY.md").read_text(encoding="utf-8")
-    if "regions × queries cross product" not in summary_md:
-        print("FAIL: cross product 표 missing", file=sys.stderr)
+    if "slot × request_type 레이턴시" not in summary_md:
+        print("FAIL: 레이턴시 표 missing", file=sys.stderr)
+        return 1
+    if "slot × phase × Prometheus" not in summary_md:
+        print("FAIL: phase × Prometheus 표 missing", file=sys.stderr)
+        return 1
+    if "_iter_total" not in summary_md or "main_booking" not in summary_md:
+        print(f"FAIL: phase 행 누락: {summary_md[:300]}", file=sys.stderr)
         return 1
     if "가설 판정" in summary_md:
         print("FAIL: hypotheses 미정의인데 가설 섹션 생성됨", file=sys.stderr)
         return 1
-    if "baseline" not in summary_md or "booking" not in summary_md:
-        print(f"FAIL: slot/region 누락: {summary_md[:200]}", file=sys.stderr)
+    if "baseline" not in summary_md or "좌석 점유" not in summary_md:
+        print(f"FAIL: slot/request_type 누락: {summary_md[:300]}", file=sys.stderr)
         return 1
-    print("PASS: summarize selftest (cross product 표 + hypotheses 옵셔널 검증)")
+    print("PASS: summarize selftest (레이턴시 + phase × Prometheus 표 + hypotheses 옵셔널)")
     return 0
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="run_dir → SUMMARY.md (cross product + hypotheses)")
-    ap.add_argument("run_dir", nargs="?", help="bench/results/<run_id>")
+    ap = argparse.ArgumentParser(description="run_dir → SUMMARY.md (레이턴시 + phase × Prometheus + hypotheses)")
+    ap.add_argument("run_dir", nargs="?", help="bench/results/<manifest_id>/<run_id>")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:

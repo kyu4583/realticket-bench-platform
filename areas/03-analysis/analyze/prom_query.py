@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""prom_query.py — Prometheus query_range + region 슬라이싱.
+"""prom_query.py — Prometheus query_range, phase-aware 슬라이싱.
+
+phases.json (run_dir 1개) 가 정의된 단계별로 metric 윈도우를 분리한다.
+phases.json 부재 시 _iter_total 윈도우만 집계 (단계 슬라이싱 미적용).
+
+iter 윈도우는 iter_meta.json 의 iter_start_epoch + (iter_end_epoch | per_run_ms) 로 결정.
+매니페스트의 per_run 필드는 더 이상 사용하지 않음 (per_run_ms 는 02-orchestration 이 Plan.json
+에서 derive 후 iter_meta 에 기록 — `ceil(plan_max_ms * 1.1)`).
 
 Source: areas/03-analysis/README.md § 3 모듈 spec
 """
@@ -11,14 +18,82 @@ from typing import Any
 FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
 
 
+def _load_phases(iter_dir: Path) -> list[dict]:
+    """phases.json 을 run_dir(=iter_dir.parent) 또는 iter_dir 자체에서 로드.
+
+    production: run_dir/phases.json 이 단일 진실 (run 내 모든 iter 공유).
+    test: iter_dir/phases.json 도 fallback 으로 허용 (selftest 편의).
+    파일 부재 또는 파싱 실패 시 [] 반환 → 호출자가 _iter_total 만 슬라이싱.
+    """
+    for candidate in (iter_dir.parent / "phases.json", iter_dir / "phases.json"):
+        if candidate.exists():
+            try:
+                with candidate.open("r", encoding="utf-8") as f:
+                    d = json.load(f)
+                phases = d.get("phases", []) or []
+                # 최소 검증: list[dict] with name/start_ms/end_ms
+                clean = []
+                for p in phases:
+                    if not isinstance(p, dict):
+                        continue
+                    if "name" not in p or "start_ms" not in p or "end_ms" not in p:
+                        continue
+                    clean.append(p)
+                return clean
+            except Exception:
+                continue
+    return []
+
+
+def _slice_window(resp: dict, start_epoch: int, end_epoch: int,
+                   end_inclusive: bool = True) -> dict:
+    """Prometheus 응답에서 [start_epoch, end_epoch] (또는 end exclusive) 윈도우 집계."""
+    if resp.get("status") != "success":
+        return {"mean": None, "max": None, "count": 0, "error": "prom status != success"}
+    values: list[float] = []
+    for series in resp.get("data", {}).get("result", []):
+        for ts_str, val_str in series.get("values", []):
+            try:
+                ts = int(ts_str)
+            except (TypeError, ValueError):
+                continue
+            in_window = (start_epoch <= ts <= end_epoch) if end_inclusive else (start_epoch <= ts < end_epoch)
+            if in_window:
+                try:
+                    values.append(float(val_str))
+                except (TypeError, ValueError):
+                    pass
+    if values:
+        return {
+            "mean": sum(values) / len(values),
+            "max": max(values),
+            "count": len(values),
+        }
+    return {"mean": None, "max": None, "count": 0, "error": "no samples in window"}
+
+
 def query_iter_metrics(iter_dir: str, manifest_path: str,
-                        offline_response: dict | None = None) -> dict[str, Any]:
-    """iter_dir 의 newest prom_*.json + manifest.queries[] + Plan.json regions 로 슬라이싱.
+                        offline_response: dict | None = None,
+                        phases_override: list[dict] | None = None) -> dict[str, Any]:
+    """iter 윈도우 + phase 별 윈도우로 Prometheus 쿼리 슬라이싱.
+
+    출력 구조:
+      {
+        "<query_name>": {
+          "_iter_total":    {"mean": ..., "max": ..., "count": ...},
+          "<phase_name_1>": {"mean": ..., "max": ..., "count": ...},
+          ...
+        },
+        ...
+      }
+    phases.json 부재 시 _iter_total 만 포함.
+    출력은 {iter_dir}/prom_metrics.json 에 atomic write.
 
     offline_response: self-test 모드 — Prometheus HTTP 호출 없이 fixture json 사용.
+    phases_override: phases.json 로드 우회 (테스트용).
     """
     try:
-        import yaml  # PyYAML
+        import yaml
     except ImportError:
         return {"error": "PyYAML not installed (pip install -r requirements.txt)"}
 
@@ -28,72 +103,73 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
     with manifest_p.open("r", encoding="utf-8") as f:
         manifest = yaml.safe_load(f)
     queries = manifest.get("queries", [])
-    plan_p = Path(iter_dir) / "Plan.json"
-    if not plan_p.exists():
-        # fallback: manifest.plan_path 가 fixture 디렉토리 기준
-        plan_p = Path(iter_dir) / Path(manifest.get("plan_path", "Plan.json")).name
-    if not plan_p.exists():
-        return {"error": f"Plan.json not found in {iter_dir}"}
-    with plan_p.open("r", encoding="utf-8") as f:
-        plan = json.load(f)
-    iter_meta_p = Path(iter_dir) / "iter_meta.json"
+
+    iter_dir_p = Path(iter_dir)
+    iter_meta_p = iter_dir_p / "iter_meta.json"
     if not iter_meta_p.exists():
         return {"error": f"iter_meta.json not found in {iter_dir}"}
     with iter_meta_p.open("r", encoding="utf-8") as f:
         iter_meta = json.load(f)
 
     iter_start = iter_meta["iter_start_epoch"]
-    regions = plan["stats"]["regions"]
-    # region 별 시간 윈도우 = iter_start + start_ms..end_ms
+    # iter_end 우선순위: iter_end_epoch (실측) → iter_start + per_run_ms/1000 (도출)
+    if "iter_end_epoch" in iter_meta:
+        iter_end = iter_meta["iter_end_epoch"]
+    elif "per_run_ms" in iter_meta:
+        iter_end = iter_start + iter_meta["per_run_ms"] // 1000
+    else:
+        return {"error": "iter_meta.json 에 iter_end_epoch 또는 per_run_ms 필요"}
+
+    if phases_override is not None:
+        phases = phases_override
+    else:
+        phases = _load_phases(iter_dir_p)
+
     out: dict[str, Any] = {}
     for q in queries:
         q_name = q["name"]
-        # offline (self-test) 또는 실제 prom_*.json
         if offline_response is not None:
             resp = offline_response
         else:
-            prom_files = sorted(Path(iter_dir).glob("prom_*.json"))
+            prom_files = sorted(iter_dir_p.glob("prom_*.json"))
             if not prom_files:
-                out[q_name] = {"error": "no prom_*.json"}
+                out[q_name] = {"_iter_total": {"error": "no prom_*.json", "mean": None, "max": None, "count": 0}}
                 continue
             with prom_files[-1].open("r", encoding="utf-8") as f:
                 resp = json.load(f)
-        if resp.get("status") != "success":
-            out[q_name] = {"error": "prom status != success", "mean": None, "max": None}
-            continue
-        # region 별 슬라이싱
-        per_region: dict[str, Any] = {}
-        for region in regions:
-            start_epoch = iter_start + region["start_ms"] // 1000
-            end_epoch = iter_start + region["end_ms"] // 1000
-            values: list[float] = []
-            for series in resp["data"]["result"]:
-                for ts_str, val_str in series["values"]:
-                    ts = int(ts_str)
-                    if start_epoch <= ts <= end_epoch:
-                        try:
-                            values.append(float(val_str))
-                        except ValueError:
-                            pass
-            if values:
-                per_region[region["name"]] = {
-                    "mean": sum(values) / len(values),
-                    "max": max(values),
-                    "count": len(values),
-                }
-            else:
-                # count == 0 → error 로 격상하여 SUMMARY.md 가 인지
-                per_region[region["name"]] = {
-                    "mean": None,
-                    "max": None,
-                    "count": 0,
-                    "error": "no samples in region window",
-                }
-        out[q_name] = per_region
+
+        per_phase: dict[str, Any] = {
+            "_iter_total": _slice_window(resp, iter_start, iter_end, end_inclusive=True)
+        }
+        for ph in phases:
+            try:
+                ph_name = str(ph["name"])
+                ph_start = iter_start + int(ph["start_ms"]) // 1000
+                ph_end = iter_start + int(ph["end_ms"]) // 1000
+            except (KeyError, TypeError, ValueError) as e:
+                continue
+            per_phase[ph_name] = _slice_window(resp, ph_start, ph_end, end_inclusive=False)
+
+        out[q_name] = per_phase
+
+    # Atomic write — prom_metrics.json
+    out_path = iter_dir_p / "prom_metrics.json"
+    tmp = out_path.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2, ensure_ascii=False)
+    tmp.replace(out_path)
     return out
 
 
 def _selftest() -> int:
+    """phase-aware 슬라이싱 selftest.
+
+    selftest 시나리오:
+      - run_dir: FIXTURES_DIR / "selftest_prom"
+      - phases.json: 3 phases (auth_check, subscribe, main_booking)
+      - iter dir: iter-1-baseline (iter_meta + offline prom_response)
+      - 검증: _iter_total + 3 phase 모두 dict, count >= 0
+    """
     manifest = FIXTURES_DIR / "manifest.yaml"
     prom_resp = FIXTURES_DIR / "prom_response.json"
     if not (manifest.exists() and prom_resp.exists()):
@@ -101,23 +177,64 @@ def _selftest() -> int:
         return 1
     with prom_resp.open("r", encoding="utf-8") as f:
         offline = json.load(f)
-    result = query_iter_metrics(str(FIXTURES_DIR), str(manifest), offline_response=offline)
+
+    # selftest run_dir 합성
+    run_dir = FIXTURES_DIR / "selftest_prom"
+    run_dir.mkdir(exist_ok=True)
+    iter_dir = run_dir / "iter-1-baseline"
+    iter_dir.mkdir(exist_ok=True)
+
+    # phases.json (run_dir 레벨)
+    phases_doc = {
+        "phases": [
+            {"name": "auth_check",   "start_ms": 0,     "end_ms": 15000},
+            {"name": "subscribe",    "start_ms": 15000, "end_ms": 30000},
+            {"name": "main_booking", "start_ms": 30000, "end_ms": 60000},
+        ]
+    }
+    (run_dir / "phases.json").write_text(json.dumps(phases_doc), encoding="utf-8")
+
+    # iter_meta.json (iter dir) — iter_end_epoch + per_run_ms 포함 (per_run 매니페스트 필드 폐기 후)
+    iter_meta = {
+        "iter": 1,
+        "slot": "baseline",
+        "iter_start_epoch": 1777663801,
+        "iter_end_epoch":   1777663861,
+        "per_run_ms":       60000,
+    }
+    (iter_dir / "iter_meta.json").write_text(json.dumps(iter_meta), encoding="utf-8")
+
+    result = query_iter_metrics(str(iter_dir), str(manifest), offline_response=offline)
+
     if "error" in result:
         print(f"FAIL: query_iter_metrics error: {result['error']}", file=sys.stderr)
         return 1
     if "http_request_rate" not in result:
         print(f"FAIL: query name missing in result: {result}", file=sys.stderr)
         return 1
-    booking = result["http_request_rate"].get("booking", {})
-    if booking.get("count", 0) < 1:
-        print(f"FAIL: region 슬라이싱 count = 0: {booking}", file=sys.stderr)
+    metric = result["http_request_rate"]
+    if "_iter_total" not in metric:
+        print(f"FAIL: _iter_total missing: {metric}", file=sys.stderr)
         return 1
-    print(f"PASS: prom_query selftest (region 슬라이싱 count={booking['count']}, mean={booking['mean']:.2f})")
+    if metric["_iter_total"].get("count", 0) < 1:
+        print(f"FAIL: _iter_total count = 0: {metric['_iter_total']}", file=sys.stderr)
+        return 1
+    expected_phases = {"auth_check", "subscribe", "main_booking"}
+    missing = expected_phases - set(metric.keys())
+    if missing:
+        print(f"FAIL: phase 슬라이싱 누락: {missing}", file=sys.stderr)
+        return 1
+    # prom_metrics.json 파일 존재 검증
+    if not (iter_dir / "prom_metrics.json").exists():
+        print("FAIL: prom_metrics.json 미작성", file=sys.stderr)
+        return 1
+    print(f"PASS: prom_query selftest (_iter_total count={metric['_iter_total']['count']}, "
+          f"phases={sorted(expected_phases)})")
     return 0
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Prometheus query_range + region 슬라이싱")
+    ap = argparse.ArgumentParser(description="Prometheus query_range, phase-aware 슬라이싱")
     ap.add_argument("--iter", dest="iter_dir", help="iter directory")
     ap.add_argument("--manifest", help="manifest yaml path")
     ap.add_argument("--selftest", action="store_true")
@@ -128,7 +245,7 @@ def main() -> int:
         ap.print_help()
         return 1
     result = query_iter_metrics(args.iter_dir, args.manifest)
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 

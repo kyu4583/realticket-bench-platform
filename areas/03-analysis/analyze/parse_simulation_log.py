@@ -3,62 +3,52 @@
 
 Source:
   areas/03-analysis/README.md § 3 분석 모듈
-
-Gatling 3.14.x binary simulation.log note:
-  Gatling 3.14.x emits a binary simulation.log (length-prefixed binary records, not
-  tab-separated text).  latin-1 encoding is used so the file never raises UnicodeDecodeError.
-  No REQUEST tab-separated lines are found → parse_iter_stats returns {} → Plan.json
-  regions fallback is activated to produce meaningful stats.json + raw_requests.jsonl.
 """
 from __future__ import annotations
-import argparse, json, sys, time
+import argparse, json, sys
 from pathlib import Path
 from typing import Any
 
 FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
 
 
-def _load_plan_regions(iter_dir: Path) -> list[str]:
-    """iter_dir/Plan.json から stats.regions[].name を返す (fallback 用)."""
-    plan = iter_dir / "Plan.json"
-    if not plan.exists():
-        return []
+def _decode_request_name(s: str) -> str:
+    """latin-1 read 의 byte 시퀀스를 UTF-8 문자열로 재해석.
+
+    simulation.log 는 latin-1 로 열어 binary safe 하게 파싱하지만,
+    한글 같은 multi-byte UTF-8 텍스트가 라벨로 들어오면 latin-1 1-byte-per-char 해석으로
+    문자열이 깨진다. 가능하면 UTF-8 로 재해석하고 실패 시 원본 유지.
+    """
     try:
-        with plan.open("r", encoding="utf-8") as f:
-            d = json.load(f)
-        # Plan.json 最上位に regions があるか stats.regions にあるか両方試す
-        regions = d.get("regions") or d.get("stats", {}).get("regions", [])
-        return [r["name"] for r in regions if isinstance(r, dict) and "name" in r]
-    except Exception:
-        return []
+        return s.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
 
 
 def parse_iter_stats(iter_dir: str) -> dict[str, Any]:
-    """iter_dir/simulation.log → stats.json (region 별 p50·p75·p95·p99·ok·ko·failure_rate).
+    """iter_dir/simulation.log → stats.json (request_name 별 p50·p75·p95·p99·ok·ko·failure_rate).
 
-    Plan.json fallback (Gatling 3.14.x binary):
-      simulation.log 에서 REQUEST 탭 구분 라인이 0건이면 Plan.json 의 regions 을 기반으로
-      합성 stats (ok=0, ko=실제 유저수, failure_rate=1.0) 를 생성한다.
-      이로써 SUMMARY.md cross product 표에 region 행이 나타난다.
+    stats.json 키 = Gatling REQUEST 라인의 request_name (parts[3]).
+    simulation.log 에서 REQUEST 탭 구분 라인이 0건이면 빈 dict 반환.
     """
     sim_log = Path(iter_dir) / "simulation.log"
     if not sim_log.exists():
         return {"error": f"simulation.log not found: {sim_log}"}
-    regions: dict[str, dict[str, Any]] = {}
+    req_types: dict[str, dict[str, Any]] = {}
     # latin-1: never crashes on binary files (every byte is valid latin-1).
-    # Gatling 3.14.x binary simulation.log — no REQUEST tab lines will be found.
     with sim_log.open("r", encoding="latin-1") as f:
         for line in f:
             parts = line.rstrip("\n").split("\t")
             if len(parts) < 7 or parts[0] != "REQUEST":
                 continue
-            # REQUEST	user	region	request_name	start_epoch_ms	end_epoch_ms	status
-            _, _, region, _, start_ms, end_ms, status = parts[:7]
+            # REQUEST	user	groups	request_name	start_epoch_ms	end_epoch_ms	status
+            _, _, _, request_name, start_ms, end_ms, status = parts[:7]
+            request_name = _decode_request_name(request_name)
             try:
                 rt_ms = (int(end_ms) - int(start_ms))
             except ValueError:
                 continue
-            bucket = regions.setdefault(region, {"latencies": [], "ok": 0, "ko": 0})
+            bucket = req_types.setdefault(request_name, {"latencies": [], "ok": 0, "ko": 0})
             bucket["latencies"].append(rt_ms)
             if status == "OK":
                 bucket["ok"] += 1
@@ -66,39 +56,26 @@ def parse_iter_stats(iter_dir: str) -> dict[str, Any]:
                 bucket["ko"] += 1
 
     out: dict[str, Any] = {}
-    if regions:
-        # 텍스트 파싱 성공 경로 (Gatling < 3.14.x 텍스트 형식)
-        for region, data in regions.items():
-            lat = sorted(data["latencies"])
-            ok, ko = data["ok"], data["ko"]
-            total = ok + ko
-            # 빈 latencies 또는 total==0 → IndexError 방지 + 오해 지표 제거
-            if not lat or total == 0:
-                out[region] = {
-                    "p50": 0.0, "p75": 0.0, "p95": 0.0, "p99": 0.0,
-                    "ok": ok, "ko": ko,
-                    "failure_rate": ko / max(1, total),
-                    "note": "no_latency_samples",
-                }
-                continue
-            n = len(lat)
-            def pct(p: float, _lat: list = lat, _n: int = n) -> float:
-                idx = max(0, min(_n - 1, int(p * _n)))
-                return float(_lat[idx])
-            out[region] = {
-                "p50": pct(0.5), "p75": pct(0.75), "p95": pct(0.95), "p99": pct(0.99),
-                "ok": ok, "ko": ko, "failure_rate": ko / max(1, total),
-            }
-    else:
-        # Plan.json fallback (Gatling 3.14.x binary format — no REQUEST lines in log)
-        plan_regions = _load_plan_regions(Path(iter_dir))
-        for rname in plan_regions:
-            # KO=100 (LOGIN_ONLY → 403), OK=0, latency placeholders from binary header
-            out[rname] = {
+    for req_name, data in req_types.items():
+        lat = sorted(data["latencies"])
+        ok, ko = data["ok"], data["ko"]
+        total = ok + ko
+        if not lat or total == 0:
+            out[req_name] = {
                 "p50": 0.0, "p75": 0.0, "p95": 0.0, "p99": 0.0,
-                "ok": 0, "ko": 100, "failure_rate": 1.0,
-                "source": "plan_regions_fallback",
+                "ok": ok, "ko": ko,
+                "failure_rate": ko / max(1, total),
+                "note": "no_latency_samples",
             }
+            continue
+        n = len(lat)
+        def pct(p: float, _lat: list = lat, _n: int = n) -> float:
+            idx = max(0, min(_n - 1, int(p * _n)))
+            return float(_lat[idx])
+        out[req_name] = {
+            "p50": pct(0.5), "p75": pct(0.75), "p95": pct(0.95), "p99": pct(0.99),
+            "ok": ok, "ko": ko, "failure_rate": ko / max(1, total),
+        }
 
     # atomic write
     out_path = Path(iter_dir) / "stats.json"
@@ -111,53 +88,35 @@ def parse_iter_stats(iter_dir: str) -> dict[str, Any]:
 
 def _extract_html_request_details(simulation_log_path: str, output_path: str,
                                   iter_dir: str | None = None) -> int:
-    """Gatling HTML stats fallback (RESEARCH § D 라인 408 — string-interning 미해결).
+    """텍스트 형식 simulation.log: REQUEST 탭 구분 라인 → JSONL.
 
-    텍스트 형식 simulation.log: REQUEST 탭 구분 라인 → JSONL.
-    Gatling 3.14.x binary format: REQUEST 라인 0건 → Plan.json regions 으로 합성 기록 생성.
+    출력 필드: request_name · status · response_time_ms · timestamp_epoch · source
     """
     count = 0
     sim = Path(simulation_log_path)
     out = Path(output_path)
-    _iter_dir = Path(iter_dir) if iter_dir else sim.parent
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".jsonl.tmp")
 
     records: list[dict] = []
-    # latin-1: never crashes on Gatling 3.14.x binary simulation.log
     with sim.open("r", encoding="latin-1") as src:
         for line in src:
             parts = line.rstrip("\n").split("\t")
             if len(parts) < 7 or parts[0] != "REQUEST":
                 continue
-            _, _, region, request_name, start_ms, end_ms, status = parts[:7]
+            _, _, _, request_name, start_ms, end_ms, status = parts[:7]
+            request_name = _decode_request_name(request_name)
             try:
                 rt_ms = float(int(end_ms) - int(start_ms))
                 ts_epoch = int(int(start_ms) / 1000)
             except ValueError:
                 continue
             records.append({
-                "region": region,
                 "request_name": request_name,
                 "status": status,
                 "response_time_ms": rt_ms,
                 "timestamp_epoch": ts_epoch,
                 "source": "html_stats",
-            })
-
-    if not records:
-        # Plan.json fallback: generate one synthetic record per region
-        # so that raw_requests.jsonl is non-empty and region labels are present
-        plan_regions = _load_plan_regions(_iter_dir)
-        now_epoch = int(time.time())
-        for rname in plan_regions:
-            records.append({
-                "region": rname,
-                "request_name": "synthetic_fallback",
-                "status": "KO",
-                "response_time_ms": 0.0,
-                "timestamp_epoch": now_epoch,
-                "source": "plan_regions_fallback",
             })
 
     with tmp.open("w", encoding="utf-8") as dst:
@@ -170,7 +129,7 @@ def _extract_html_request_details(simulation_log_path: str, output_path: str,
 
 def parse_simulation_log_to_raw_requests(simulation_log_path: str, output_path: str,
                                          iter_dir: str | None = None) -> int:
-    """parse_simulation_log_to_raw_requests: raw_requests.jsonl = every REQUEST + region label.
+    """raw_requests.jsonl = every REQUEST line as JSON record.
 
     Source: areas/03-analysis/README.md
     """
@@ -182,28 +141,29 @@ def _selftest() -> int:
     if not sim.exists():
         print(f"FAIL: fixture not found: {sim}", file=sys.stderr)
         return 1
-    # parse_iter_stats
+    # parse_iter_stats — keyed by request_name
     stats = parse_iter_stats(str(FIXTURES_DIR))
-    if not stats or "booking" not in stats:
-        print(f"FAIL: parse_iter_stats — no booking region: {stats}", file=sys.stderr)
+    if not stats or "좌석 점유" not in stats:
+        print(f"FAIL: parse_iter_stats — no '좌석 점유' request_name: {stats}", file=sys.stderr)
         return 1
-    if stats["booking"]["ok"] != 3 or stats["booking"]["ko"] != 1:
-        print(f"FAIL: parse_iter_stats — ok/ko mismatch: {stats['booking']}", file=sys.stderr)
+    if stats["좌석 점유"]["ok"] != 2 or stats["좌석 점유"]["ko"] != 0:
+        print(f"FAIL: parse_iter_stats — ok/ko mismatch: {stats['좌석 점유']}", file=sys.stderr)
         return 1
+    # raw_requests.jsonl
     raw_out = FIXTURES_DIR / "raw_requests.jsonl"
     n = parse_simulation_log_to_raw_requests(str(sim), str(raw_out))
     if n != 4:
         print(f"FAIL: expected 4 records, got {n}", file=sys.stderr)
         return 1
-    # 6 필드 검증
+    # 5 필드 검증 (region 제거)
     with raw_out.open("r", encoding="utf-8") as f:
         first = json.loads(f.readline())
-    required = {"region", "request_name", "status", "response_time_ms", "timestamp_epoch", "source"}
+    required = {"request_name", "status", "response_time_ms", "timestamp_epoch", "source"}
     if not required.issubset(first.keys()):
         print(f"FAIL: missing fields: {required - first.keys()}", file=sys.stderr)
         return 1
-    if first["region"] != "booking" or first["source"] != "html_stats":
-        print(f"FAIL: region/source label missing: {first}", file=sys.stderr)
+    if first["request_name"] != "좌석 점유" or first["source"] != "html_stats":
+        print(f"FAIL: request_name/source label missing: {first}", file=sys.stderr)
         return 1
     print("PASS: parse_simulation_log selftest")
     return 0

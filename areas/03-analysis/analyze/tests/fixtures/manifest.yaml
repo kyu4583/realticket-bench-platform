@@ -2,7 +2,6 @@ manifest_id: "self-test"
 run_id_prefix: "self-test"
 iterations: 1
 warmup: "30s"
-per_run: "1m"
 cooldown: "15s"
 max_failures: 1
 plan_path: "fixtures/Plan.json"
@@ -13,7 +12,7 @@ event_ids:
   - 1
 queries:
   - name: "http_request_rate"
-    promql: "rate(http_server_requests_seconds_count[1m])"
+    promql: "sum(rate(http_requests_total{job=\"nest-app\"}[1m]))"
     unit: "req/s"
 slots:
   - name: "baseline"

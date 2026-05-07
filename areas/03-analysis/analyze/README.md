@@ -9,8 +9,7 @@
 3 모듈의 함수 시그니처·입출력·CLI 단일 진실은 영역 문서에 lock — 본 README 는 *spec 재진술 X · link O*.
 
 - 3 모듈 spec: [`areas/03-analysis/README.md` § 3 모듈 spec](../README.md#3-모듈-스펙) — 각 모듈의 메인 함수 · 입력 · 출력 · CLI 인자 단일 진실
-- raw_requests.jsonl per-request 출력: `parse_simulation_log_to_raw_requests` 의 region 라벨 부착
-- Region — 소비 측 (Lock #4): [`areas/03-analysis/README.md` § Region — 소비 측](../README.md#region--소비-측)
+- raw_requests.jsonl per-request 출력: [`areas/03-analysis/README.md` § raw_requests.jsonl 형식](../README.md#raw_requestsjsonl-형식)
 - 가설 판정 입력: [`areas/03-analysis/README.md` § 가설 판정 입력](../README.md#가설-판정-입력)
 
 ## venv 부트스트랩
@@ -55,11 +54,11 @@ analyze/
 
 ## raw_requests.jsonl 라인 형식
 
-per-record JSON 1줄. region 라벨 부착으로 사후 재분석 시 시간 구간 식별 가능. 자세한 필드 정의는 [03-analysis](../README.md) 참조.
+per-record JSON 1줄 (5 필드: request_name · status · response_time_ms · timestamp_epoch · source). 자세한 필드 정의는 [03-analysis](../README.md) 참조.
 
 ## Out of Scope
 
-- region/slot/iteration *모델 정의* → 00-contracts § Region·Slot·Iteration 모델 (소비만)
+- slot/iteration *모델 정의* → 00-contracts § Slot·Iteration 모델 (소비만)
 - 매니페스트 schema → 00-contracts § Manifest Schema (`hypotheses[]` 절 입력만 소비)
 - run.sh 의 hook 호출 → 02-orchestration (`run.sh main` 의 마지막 단계에서 `summarize.py` 호출)
 - v1.0 audit § tech_debt #6 한계 (per-request 시각 미제공, Gatling 3.14.x string-interning) → 모듈 docstring + `source: "html_stats"` 필드로 명시

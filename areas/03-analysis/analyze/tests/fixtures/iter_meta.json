@@ -1,1 +1,1 @@
-{"iter": 1, "slot": "baseline", "plan_path": "fixtures/Plan.json", "iter_start_epoch": 1777663801}
+{"iter": 1, "slot": "baseline", "plan_path": "fixtures/Plan.json", "iter_start_epoch": 1777663801, "iter_end_epoch": 1777663861, "per_run_ms": 60000}
