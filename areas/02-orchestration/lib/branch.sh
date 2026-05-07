@@ -41,26 +41,34 @@ prepare_realticket_branches() {
   local manifest_id="$1"
   shift
   local slot_names=("$@")
+  local meta_br="bench/$manifest_id/meta"
   git -C "$REALTICKET_DIR" fetch origin
   # 메타 브랜치 (항상 1개)
-  if git -C "$REALTICKET_DIR" show-ref --verify --quiet "refs/heads/bench/$manifest_id"; then
-    git -C "$REALTICKET_DIR" checkout "bench/$manifest_id"
+  if git -C "$REALTICKET_DIR" show-ref --verify --quiet "refs/heads/$meta_br"; then
+    git -C "$REALTICKET_DIR" checkout "$meta_br"
   else
-    git -C "$REALTICKET_DIR" checkout -b "bench/$manifest_id" origin/dev
+    git -C "$REALTICKET_DIR" checkout -b "$meta_br" origin/dev
   fi
   # 슬롯 브랜치 (슬롯 ≥ 2 시)
   if [[ ${#slot_names[@]} -ge 2 ]]; then
+    local slot_idx=0
     for slot in "${slot_names[@]}"; do
-      [[ -z "$slot" ]] && continue
+      [[ -z "$slot" ]] && { slot_idx=$((slot_idx+1)); continue; }
       local br="bench/$manifest_id/$slot"
+      # SLOT_SOURCE_BRANCH[$slot_idx] 가 있으면 그 브랜치를 기점으로 분기
+      local src_branch="${SLOT_SOURCE_BRANCH[$slot_idx]:-}"
       if git -C "$REALTICKET_DIR" show-ref --verify --quiet "refs/heads/$br"; then
         git -C "$REALTICKET_DIR" checkout "$br"
+      elif [[ -n "$src_branch" ]]; then
+        git -C "$REALTICKET_DIR" checkout -b "$br" "$src_branch" \
+          || die "prepare_realticket_branches: checkout -b $br from $src_branch failed"
       else
-        git -C "$REALTICKET_DIR" checkout -b "$br" "bench/$manifest_id"
+        git -C "$REALTICKET_DIR" checkout -b "$br" "$meta_br"
       fi
+      slot_idx=$((slot_idx+1))
     done
     # 메타 브랜치로 복귀 (yml commit 은 generate_bench_stack_yml 가 메타에서)
-    git -C "$REALTICKET_DIR" checkout "bench/$manifest_id"
+    git -C "$REALTICKET_DIR" checkout "$meta_br"
   fi
   log INFO "prepare_realticket_branches: meta + ${#slot_names[@]} slot branch(es) prepared"
 }
@@ -120,7 +128,7 @@ push_realticket_branches_to_origin() {
   shift
   local slot_names=("$@")
   git -C "$REALTICKET_DIR" fetch origin
-  _push_one_realticket_branch "bench/$manifest_id"
+  _push_one_realticket_branch "bench/$manifest_id/meta"
   if [[ ${#slot_names[@]} -ge 2 ]]; then
     for slot in "${slot_names[@]}"; do
       [[ -z "$slot" ]] && continue
@@ -134,12 +142,18 @@ push_realticket_branches_to_origin() {
 # 인자: <full_branch_name>  (예: bench/<id> 또는 bench/<id>/<slot>)
 _push_one_realticket_branch() {
   local br="$1"
+  local local_sha
+  local_sha=$(git -C "$REALTICKET_DIR" rev-parse "$br")
   if git -C "$REALTICKET_DIR" ls-remote --heads --exit-code origin "$br" >/dev/null 2>&1; then
-    # origin 에 동명 ref 존재 → fetch + sha 캡처 + 새 이름 보존 push + force push
     git -C "$REALTICKET_DIR" fetch origin "+refs/heads/${br}:refs/remotes/origin/${br}" \
       || die "push_realticket_branches_to_origin: origin fetch failed for $br"
     local rsha
     rsha=$(git -C "$REALTICKET_DIR" rev-parse "origin/$br")
+    # 동일 SHA면 skip — 재실행 시 불필요한 rename 브랜치 생성 방지
+    if [[ "$local_sha" == "$rsha" ]]; then
+      log INFO "_push_one_realticket_branch: $br already up-to-date — skipping"
+      return 0
+    fi
     local utc_ts
     utc_ts=$(date -u +%Y%m%d-%H%M%S)
     git -C "$REALTICKET_DIR" push origin "${rsha}:refs/heads/${br}-before-${utc_ts}" \

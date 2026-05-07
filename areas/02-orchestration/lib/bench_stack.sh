@@ -81,8 +81,14 @@ generate_bench_stack_yml() {
   yq eval-all '. as $item ireduce ({}; . *+ $item)' "${patches[@]}" > "$tmp_yml" \
     || { rm -f "$tmp_yml"; die "yq merge failed for $manifest_id"; }
   [[ -s "$tmp_yml" ]] || { rm -f "$tmp_yml"; die "yq merge produced empty output for $manifest_id"; }
-  sed -e "s|MANIFEST_ID_PLACEHOLDER|$manifest_id|g" \
-      -e "s|CANDIDATE_IMAGE_PLACEHOLDER|$manifest_id-candidate|g" \
+  local baseline_image="$manifest_id"
+  local candidate_image="$manifest_id-candidate"
+  if [[ "${#slots[@]}" -ge 2 ]]; then
+    baseline_image="$manifest_id-${slots[0]}"
+    candidate_image="$manifest_id-${slots[1]}"
+  fi
+  sed -e "s|MANIFEST_ID_PLACEHOLDER|$baseline_image|g" \
+      -e "s|CANDIDATE_IMAGE_PLACEHOLDER|$candidate_image|g" \
       "$tmp_yml" > "$out_file" \
     || { rm -f "$tmp_yml"; die "sed substitution failed for $manifest_id"; }
   rm -f "$tmp_yml"
@@ -110,12 +116,26 @@ generate_bench_stack_yml() {
       [[ -z "$slot" ]] && continue
       git -C "$REALTICKET_DIR" checkout "bench/$manifest_id/$slot" \
         || die "checkout bench/$manifest_id/$slot failed"
-      git -C "$REALTICKET_DIR" cherry-pick --no-verify "$last_commit" \
-        || die "cherry-pick failed for slot=$slot manifest_id=$manifest_id"
+      # 이미 ancestor이면 skip (재실행 안전성: baseline처럼 동일 hash인 경우)
+      if git -C "$REALTICKET_DIR" merge-base --is-ancestor "$last_commit" HEAD 2>/dev/null; then
+        log INFO "generate_bench_stack_yml: cherry-pick $last_commit already ancestor of bench/$manifest_id/$slot — skipping"
+      else
+        local cp_out cp_rc=0
+        cp_out=$(git -C "$REALTICKET_DIR" cherry-pick --no-verify "$last_commit" 2>&1) || cp_rc=$?
+        if [[ $cp_rc -ne 0 ]]; then
+          if echo "$cp_out" | grep -qiE "nothing to commit|empty|already been applied"; then
+            git -C "$REALTICKET_DIR" cherry-pick --abort 2>/dev/null || true
+            log INFO "generate_bench_stack_yml: cherry-pick $last_commit to bench/$manifest_id/$slot already applied (empty) — skipping"
+          else
+            git -C "$REALTICKET_DIR" cherry-pick --abort 2>/dev/null || true
+            die "cherry-pick failed for slot=$slot manifest_id=$manifest_id: $cp_out"
+          fi
+        fi
+      fi
     done
     # 메타 브랜치 복귀
-    git -C "$REALTICKET_DIR" checkout "bench/$manifest_id" \
-      || die "checkout back to bench/$manifest_id failed"
+    git -C "$REALTICKET_DIR" checkout "bench/$manifest_id/meta" \
+      || die "checkout back to bench/$manifest_id/meta failed"
   fi
 
   log INFO "generate_bench_stack_yml: $out_file (α=$alpha β=$beta γ=$gamma δ=$delta, patches=${#patches[@]})"

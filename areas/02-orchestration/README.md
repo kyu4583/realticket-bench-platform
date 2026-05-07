@@ -66,13 +66,13 @@ rollback_untracked_overrides() # 15번 함수
 
 ## Fire-and-forget + 마커
 
-Lock #5의 구현. 사용자 한 줄로 시작:
+Lock #4의 구현. 사용자 한 줄로 시작:
 
 ```bash
-nohup bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml > bench/results/<run_id>/run.log 2>&1 & disown
+nohup bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml >/dev/null 2>&1 & disown
 ```
 
-이후 ssh 세션·AI conversation을 종료해도 run.sh는 VM에서 지속. 마커 + `progress.json`이 유일한 진행/종료 인터페이스.
+이후 ssh 세션·AI conversation을 종료해도 run.sh는 VM에서 지속. 로그는 run.sh가 생성한 `bench/results/<manifest_id>/<run_id>/run.log`에 기록된다. 마커 + `progress.json`이 유일한 진행/종료 인터페이스.
 
 | 상태 | 마커 | 의미 |
 |------|------|------|
@@ -113,6 +113,27 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 
 ---
 
+## phases.json 작성 (region 단계 단일 진실)
+
+매니페스트의 region 구성과 단계 간 대기가 결정되면 본 영역이 run 시작 시점에 `<run_dir>/phases.json` 을 derive 작성한다. 03-analysis `prom_query.py` 가 이 파일을 읽어 phase 별 Prometheus 슬라이싱을 수행한다.
+
+| 입력 | 출처 |
+|------|------|
+| 단계명 + 순서 | 매니페스트 수집 (4)단계 — [01-planning § 매니페스트 수집 흐름](../01-planning/README.md) |
+| 단계 간 대기 ms | Gatling Config.java 스냅샷 (`ENABLE_WAITING_*` + `WAITING_*_MILLIS`) — [04-gatling § region ↔ Config 매핑](../04-gatling-integration/README.md) |
+| 단계별 활동 시간 추정 | auth/subscribe = AI 추정 (1~5s). **본예매 = `ceil(Plan.json.stats.simulation_duration_ms × 1.1)`** — derived per_run. |
+
+> **per_run 도출:** PlanGenerator 가 자연 종료로 결정한 `simulation_duration_ms` 에 1.1 안전 계수 적용. 매니페스트의 `per_run` 필드는 폐기됨. 도출된 값은 (a) iter_meta.json `per_run_ms` (b) phases.json `main_booking.end_ms` 두 곳에 기록 — 03-analysis 가 둘 다 소비.
+
+| 출력 | 위치 |
+|------|------|
+| `phases.json` | `bench/results/<manifest_id>/<run_id>/phases.json` (run_dir 1개 — 모든 iter 공유) |
+
+**스키마 단일 진실:** [00-contracts § phases.json 스키마](../00-contracts/README.md).
+**부재 시 동작:** prom_query 는 `_iter_total` 만 슬라이싱 (하위 호환).
+
+---
+
 ## 수정 가능 파일
 
 | 파일 | 담당 함수 |
@@ -147,5 +168,5 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 ### 행동 금지
 
 - concurrent dual 부하 구현 추가 금지 (Lock #3 영구 미지원)
-- 마커 파일 외의 상태 파일 신규 추가 금지 (Lock #5)
+- 마커 파일 외의 상태 파일 신규 추가 금지 (Lock #4)
 - fire-and-forget 흐름을 foreground로 변경 금지

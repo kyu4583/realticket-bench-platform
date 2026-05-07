@@ -17,7 +17,7 @@ die() {
 # ─── 의존 명령 검사 ───
 check_deps() {
   local missing=0
-  for cmd in yq jq curl ssh scp git python3 sha256sum date; do
+  for cmd in yq jq curl ssh scp git python3 sha256sum date tee; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       log ERROR "missing dep: $cmd"
       missing=$((missing + 1))

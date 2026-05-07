@@ -31,7 +31,7 @@ admin_login() {
 #   - 각 event init 호출이 200 아니면 RESET_RETRY_INTERVAL_S 후 재시도, 최대 RESET_RETRY_COUNT 회.
 #   - 횟수 안에 200 못 받으면 → 그 iter 통째 즉시 실패 (return 1).
 #     RESET_FAILED_EVENT / RESET_FAILED_HTTP 를 export 하여 caller(run.sh main)가 iter_meta 에 기록.
-#   - 부분 reset 오염 방지 (Lock #4 신뢰성). 옛 best-effort all 방식은 폐기.
+#   - 부분 reset 오염 방지. 옛 best-effort all 방식은 폐기.
 RESET_RETRY_COUNT="${RESET_RETRY_COUNT:-3}"
 RESET_RETRY_INTERVAL_S="${RESET_RETRY_INTERVAL_S:-2}"
 
@@ -99,14 +99,18 @@ write_progress() {
   mv "${run_dir}/progress.json.tmp.$$" "${run_dir}/progress.json"
 }
 
-# ─── write_iter_meta: 4 필드 JSON (atomic tmp + mv) ───
-# Source: 02-RESEARCH § A 행 10 (05-04-SUMMARY § Accomplishments)
+# ─── write_iter_meta: 6 필드 JSON (atomic tmp + mv) ───
+# Schema: areas/00-contracts/README.md § iter_meta.json 스키마
+# 인자: <iter_dir> <iter_num> <slot> <plan_path> <iter_start_epoch> <iter_end_epoch> <per_run_ms>
+# per_run_ms 는 02-orchestration 이 Plan.json 에서 도출 (ceil(simulation_duration_ms × 1.1)).
 write_iter_meta() {
-  local iter_dir="$1" iter_num="$2" slot="$3" plan_path="$4" iter_start_epoch="$5"
+  local iter_dir="$1" iter_num="$2" slot="$3" plan_path="$4" \
+        iter_start_epoch="$5" iter_end_epoch="$6" per_run_ms="$7"
   jq -n \
     --argjson n "$iter_num" --arg slot "$slot" \
     --arg plan "$plan_path" --argjson s "$iter_start_epoch" \
-    '{iter:$n,slot:$slot,plan_path:$plan,iter_start_epoch:$s}' \
+    --argjson e "$iter_end_epoch" --argjson pr "$per_run_ms" \
+    '{iter:$n,slot:$slot,plan_path:$plan,iter_start_epoch:$s,iter_end_epoch:$e,per_run_ms:$pr}' \
     > "${iter_dir}/iter_meta.json.tmp.$$"
   mv "${iter_dir}/iter_meta.json.tmp.$$" "${iter_dir}/iter_meta.json"
 }
@@ -138,7 +142,7 @@ cleanup_on_exit() {
   set +e
   trap '' EXIT  # 재진입 방지
 
-  # ssh hang 방지: timeout 으로 강제 종료 (Lock #5 fire-and-forget 신뢰성).
+  # ssh hang 방지: timeout 으로 강제 종료 (Lock #4 fire-and-forget 신뢰성).
   # subshell 에서 util.sh+branch.sh 를 source — log/die/branch 함수 모두 복원.
   # BENCH_ROOT, GATLING_DIR, REALTICKET_DIR, VM_HOST 는 run.sh 가 이미 export.
   export run_dir 2>/dev/null || true

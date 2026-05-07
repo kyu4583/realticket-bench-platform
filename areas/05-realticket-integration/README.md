@@ -50,7 +50,7 @@ curl -X POST 'http://192.168.138.2:8080/booking/init/<eventId>' \
 매니페스트 시작 시 AI가 자동 수행하는 7단계:
 
 1. RealTicket repo dev 브랜치 최신 상태 확인 (`git fetch origin`)
-2. `bench/<manifest_id>` 메타 브랜치 분기 (슬롯 수 무관, 항상 생성)
+2. `bench/<manifest_id>/meta` 메타 브랜치 분기 (슬롯 수 무관, 항상 생성)
 3. 슬롯 ≥ 2이면 `bench/<manifest_id>/<slot_name>` 슬롯 브랜치 추가 분기
 4. 매니페스트 의도에 맞는 코드 변경 적용 (각 슬롯 브랜치별)
 5. `bench-stack/<manifest_id>.yml` 작성 (generate_bench_stack_yml 결과를 메타 브랜치에 commit, `--no-verify` 필수)
@@ -61,18 +61,21 @@ curl -X POST 'http://192.168.138.2:8080/booking/init/<eventId>' \
 
 ## build_vm_images() VM 빌드 3단계
 
+단계 (1)·(2)는 **슬롯별로 반복** 수행. 단계 (3)은 슬롯 수 무관 1회.
+
 ```bash
-# (1) VM에서 매니페스트 ID 브랜치 pull
-ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin && git checkout 'bench/<manifest_id>'"
+# (1) VM에서 원격 fetch
+ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin"
 
-# (2) back/Dockerfile.dev-in-local 로 nest 이미지 빌드 (기본값)
-ssh VM_ubuntu "cd ~/web04-RealTicket && docker build -f back/Dockerfile.dev-in-local -t 'nest:<manifest_id>' back/"
+# (2) checkout 및 nest 이미지 빌드 — 슬롯별 반복
+# 슬롯 1개:
+ssh VM_ubuntu "cd ~/web04-RealTicket && git checkout -B 'bench/<manifest_id>' 'origin/bench/<manifest_id>' && docker build -f back/Dockerfile.dev-in-local -t 'nest:<manifest_id>' back/"
+# 슬롯 N개 (각 슬롯마다):
+ssh VM_ubuntu "cd ~/web04-RealTicket && git checkout -B 'bench/<manifest_id>/<slot_name>' 'origin/bench/<manifest_id>/<slot_name>' && docker build -f back/Dockerfile.dev-in-local -t 'nest:<manifest_id>-<slot_name>' back/"
 
-# (3) bench-stack/<manifest_id>.yml 로 stack deploy
-ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/<manifest_id>' -- 'bench-stack/<manifest_id>.yml' && docker stack deploy -c 'bench-stack/<manifest_id>.yml' realticket"
+# (3) bench-stack/<manifest_id>.yml 로 stack deploy — 슬롯 수 무관 1회
+ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/<manifest_id>/meta' -- 'bench-stack/<manifest_id>.yml' && docker stack deploy -c 'bench-stack/<manifest_id>.yml' realticket"```
 ```
-
-슬롯 ≥ 2 시: 슬롯별로 `bench/<manifest_id>/<slot_name>` 브랜치를 checkout → `nest:<manifest_id>-<slot_name>` 태그로 빌드.
 
 ---
 
@@ -80,12 +83,13 @@ ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin
 
 | 브랜치 | 목적 |
 |--------|------|
-| `bench/<manifest_id>` | 메타 브랜치 — yml + 슬롯 무관 공통 코드. 항상 1개 |
+| `bench/<manifest_id>/meta` | 메타 브랜치 — yml + 슬롯 무관 공통 코드. 항상 1개 |
 | `bench/<manifest_id>/<slot_name>` | 슬롯 브랜치 — 슬롯별 코드 분기 + 동일 yml 복사. 슬롯 ≥ 2 시 N개 |
 
 **불변 조건:**
 - 변경 없는 매니페스트도 메타 브랜치 반드시 생성 (재현성)
 - 브랜치 영구 보존 — 삭제 금지
+- `bench/<manifest_id>` 루트 브랜치는 사용 금지. Git ref는 경로형 네임스페이스라 `refs/heads/bench/<manifest_id>`와 `refs/heads/bench/<manifest_id>/<slot_name>`이 동시에 존재할 수 없다. 과거 루트 브랜치가 있으면 `/meta`로 rename하거나 제거한 뒤 슬롯 브랜치를 만든다.
 
 ---
 
@@ -117,7 +121,7 @@ RealTicket repo의 신규 폴더 `bench-stack/`은 본 repo가 책임지는 영�
 아래 패턴 중 하나라도 발생하면 즉시 중단 후 사용자에게 보고:
 
 1. main/dev 직접 변경 시도
-2. `bench/<manifest_id>` 브랜치 삭제 시도
+2. `bench/<manifest_id>/meta` 또는 `bench/<manifest_id>/<slot_name>` 브랜치 삭제 시도. 단, 과거 잘못 생성된 루트 `bench/<manifest_id>` ref를 `/meta`로 rename/제거하는 1회 마이그레이션은 예외
 3. 매니페스트 종료 후 외부 repo가 main이 아닌 상태
 4. 슬롯 N개 매니페스트의 슬롯 브랜치 yml hash 불일치
 

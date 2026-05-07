@@ -42,6 +42,23 @@ run_gatling() {
     log WARN "run_gatling: no archive dir found under $archive_root/"
     return 1
   fi
+  # Gatling HTML report 복사 (사용자 검토용)
+  # 원천은 Gatling 기본 리포트 경로(app/build/reports/gatling)의 최신 디렉토리.
+  # iter_dir/gatling-report/index.html 로 바로 열 수 있게 디렉토리 내용을 복사한다.
+  local report_root="$GATLING_DIR/app/build/reports/gatling"
+  local latest_report_dir=""
+  if compgen -G "$report_root/*" >/dev/null; then
+    latest_report_dir=$(find "$report_root" -maxdepth 1 -mindepth 1 -type d \
+                        -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+  fi
+  if [[ -n "$latest_report_dir" && -d "$latest_report_dir" ]]; then
+    mkdir -p "$iter_dir/gatling-report"
+    cp -R "$latest_report_dir"/. "$iter_dir/gatling-report/" \
+      || log WARN "run_gatling: failed to copy Gatling report from $latest_report_dir"
+    printf '%s\n' "$latest_report_dir" > "$iter_dir/gatling-report-source.txt" || true
+  else
+    log WARN "run_gatling: no Gatling HTML report found under $report_root/"
+  fi
   # simulation.log 복사 (03-analysis 입력)
   find "$latest_dir" -name 'simulation.log' -exec cp -f {} "$iter_dir/simulation.log" \; || true
   # effective-config.json 복사 (04 contract 라인 180 검증 표시)
@@ -64,19 +81,19 @@ build_vm_images() {
 
   if [[ ${#slot_names[@]} -le 1 ]]; then
     # 단일 슬롯 — 메타 브랜치
-    ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout 'bench/$manifest_id' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
+    ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -- . && git checkout 'bench/$manifest_id/meta' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
       || die "build_vm_images failed for $manifest_id"
   else
     for slot in "${slot_names[@]}"; do
       [[ -z "$slot" ]] && continue
-      ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout 'bench/$manifest_id/$slot' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id-$slot' back/" \
+      ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -- . && git checkout 'bench/$manifest_id/$slot' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id-$slot' back/" \
         || die "build_vm_images failed for $manifest_id/$slot"
     done
   fi
 
   # bench-stack/<id>.yml 가져와서 stack deploy (메타 브랜치 origin 기준)
-  # git checkout origin/bench/$manifest_id 로 origin 최신 파일을 직접 취득 (로컬 브랜치 캐시 우회)
-  ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/$manifest_id' -- 'bench-stack/$manifest_id.yml' && docker stack deploy -c 'bench-stack/$manifest_id.yml' realticket" \
+  # git checkout origin/bench/$manifest_id/meta 로 origin 최신 파일을 직접 취득 (로컬 브랜치 캐시 우회)
+  ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/$manifest_id/meta' -- 'bench-stack/$manifest_id.yml' && docker stack deploy -c 'bench-stack/$manifest_id.yml' realticket" \
     || die "stack deploy failed for $manifest_id"
 
   # force-restart (areas/02-orchestration/README.md § 이미지 swap·stack restart 절차) — 안전판

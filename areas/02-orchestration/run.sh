@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # areas/02-orchestration/run.sh — 단일 진입점 (Lock #1).
 # 사용: bash areas/02-orchestration/run.sh <manifest.yaml>
-# Background: nohup bash areas/02-orchestration/run.sh <manifest.yaml> > bench/results/<run_id>/run.log 2>&1 & disown
+# Background: nohup bash areas/02-orchestration/run.sh <manifest.yaml> >/dev/null 2>&1 & disown
 # Source: areas/02-orchestration/README.md § run.sh 17 함수 + § 이미지 swap·stack restart 절차
 
 set -Eeuo pipefail  # -E (errtrace): 함수 내부 ERR 이 trap 에 전달
@@ -47,17 +47,22 @@ main() {
   [[ "$MANIFEST_ID" =~ ^[A-Za-z0-9_-]+$ ]] \
     || die "manifest_id 가 [A-Za-z0-9_-]+ 패턴 위반: $MANIFEST_ID"
   export MANIFEST_ID
-  local run_id_prefix utc_ts run_id
+  local run_id_prefix utc_ts run_id manifest_results_dir
   run_id_prefix=$(manifest_yq 'run_id_prefix' "$manifest")
   utc_ts=$(date -u +%Y%m%d-%H%M%S)
   [[ "$run_id_prefix" == "null" || -z "$run_id_prefix" ]] && run_id_prefix="$MANIFEST_ID"
+  [[ "$run_id_prefix" =~ ^[A-Za-z0-9_-]+$ ]] \
+    || die "run_id_prefix 가 [A-Za-z0-9_-]+ 패턴 위반: $run_id_prefix"
   run_id="${run_id_prefix}-${utc_ts}"
-  run_dir="$REPO_ROOT/bench/results/$run_id"
+  manifest_results_dir="$REPO_ROOT/bench/results/$MANIFEST_ID"
+  run_dir="$manifest_results_dir/$run_id"
   mkdir -p "$run_dir"
+  : > "$run_dir/run.log"
+  exec > >(tee -a "$run_dir/run.log") 2>&1
 
-  # RUNNING 마커 (Lock #5)
+  # RUNNING 마커 (Lock #4)
   : > "$run_dir/RUNNING"
-  log INFO "main: run_id=$run_id manifest_id=$MANIFEST_ID"
+  log INFO "main: run_id=$run_id manifest_id=$MANIFEST_ID run_dir=$run_dir"
 
   # SLOT_TARGETS 배열 빌드 (manifest.slots[].targetUrl)
   local slot_count slot_names
@@ -67,18 +72,26 @@ main() {
   [[ "$slot_count" -ge 1 ]] || die "slots[] 배열에 슬롯이 1개 이상 필요"
   declare -ga SLOT_TARGETS=()
   declare -ga SLOT_NAMES=()
+  declare -ga SLOT_SCENARIO=()
+  declare -ga SLOT_SOURCE_BRANCH=()
   local i=0
   while [[ $i -lt $slot_count ]]; do
-    local turl sname
+    local turl sname smode sbranch
     turl=$(manifest_yq "slots[$i].targetUrl" "$manifest")
     sname=$(manifest_yq "slots[$i].name" "$manifest")
-    [[ "$turl"  == "null" || -z "$turl"  ]] && turl="http://192.168.138.2:8080"
-    [[ "$sname" == "null" || -z "$sname" ]] && sname="slot-$i"
+    smode=$(manifest_yq "slots[$i].scenario_mode" "$manifest")
+    sbranch=$(manifest_yq "slots[$i].source_branch" "$manifest")
+    [[ "$turl"    == "null" || -z "$turl"    ]] && turl="http://192.168.138.2:8080"
+    [[ "$sname"   == "null" || -z "$sname"   ]] && sname="slot-$i"
+    [[ "$smode"   == "null" || -z "$smode"   ]] && smode="LOGIN_ONLY"
+    [[ "$sbranch" == "null" || -z "$sbranch" ]] && sbranch=""
     SLOT_TARGETS+=("$turl")
     SLOT_NAMES+=("$sname")
+    SLOT_SCENARIO+=("$smode")
+    SLOT_SOURCE_BRANCH+=("$sbranch")
     i=$((i + 1))
   done
-  export SLOT_TARGETS SLOT_NAMES
+  export SLOT_TARGETS SLOT_NAMES SLOT_SCENARIO SLOT_SOURCE_BRANCH
   slot_names=$(manifest_yq 'slots[].name' "$manifest")
   # slot 이름도 git branch / docker image tag / ssh 인자로 들어가므로 검증
   for slot in $slot_names; do
@@ -98,21 +111,33 @@ main() {
   build_vm_images "$MANIFEST_ID" $slot_names
 
   # 매니페스트 변수 추출
-  local prom_url plan_path warmup_s per_run_s cooldown_s total_iter
+  local prom_url plan_path warmup_s cooldown_s total_iter
   prom_url=$(manifest_yq 'prom_url' "$manifest")
   plan_path=$(manifest_yq 'plan_path' "$manifest")
   warmup_s=$(parse_duration "$(manifest_yq 'warmup' "$manifest")")
-  per_run_s=$(parse_duration "$(manifest_yq 'per_run' "$manifest")")
   cooldown_s=$(parse_duration "$(manifest_yq 'cooldown' "$manifest")")
+
+  # per_run 도출: Plan.json 의 stats.simulation_duration_ms × 1.1 (ceil)
+  # PlanGenerator 가 자연 종료로 simulation_duration_ms 를 결정 — 매니페스트는 per_run 입력 X
+  local plan_full_path plan_max_ms per_run_ms per_run_s
+  plan_full_path="$GATLING_DIR/$plan_path"
+  [[ -f "$plan_full_path" ]] || die "Plan.json not found: $plan_full_path (PlanGenerator 실행 누락 의심)"
+  plan_max_ms=$(jq -r '.stats.simulation_duration_ms // 0' "$plan_full_path")
+  [[ "$plan_max_ms" -gt 0 ]] || die "Plan.json stats.simulation_duration_ms 가 0 — Plan 미생성 의심"
+  # ceil(plan_max_ms × 1.1) ms → ceil(_ms / 1000) s
+  per_run_ms=$(( (plan_max_ms * 11 + 9) / 10 ))
+  per_run_s=$(( (per_run_ms + 999) / 1000 ))
+  log INFO "main: per_run derived — plan_max_ms=$plan_max_ms → per_run_ms=$per_run_ms (per_run_s=$per_run_s)"
+
   total_iter=$(manifest_yq 'iterations' "$manifest")
   if [[ "$total_iter" == "null" || -z "$total_iter" ]]; then
     local dur_s
     dur_s=$(parse_duration "$(manifest_yq 'duration' "$manifest")")
     # per_run + cooldown 분모 0 방지 + total_iter > 0 검증
     local denom=$(( per_run_s + cooldown_s ))
-    [[ "$denom" -gt 0 ]] || die "per_run + cooldown must be > 0s in duration mode"
+    [[ "$denom" -gt 0 ]] || die "derived per_run + cooldown must be > 0s in duration mode"
     total_iter=$(( (dur_s - warmup_s) / denom ))
-    [[ "$total_iter" -gt 0 ]] || die "computed total_iter=$total_iter is 0 (check duration/per_run/cooldown)"
+    [[ "$total_iter" -gt 0 ]] || die "computed total_iter=$total_iter is 0 (check duration/derived per_run/cooldown)"
   fi
 
   # ADMIN SID
@@ -183,7 +208,7 @@ main() {
     else
       log WARN "parse_simulation_log.py not found — skipping"
     fi
-    write_iter_meta "$iter_dir" "$current_iter" "$current_slot" "$plan_path" "$iter_start"
+    write_iter_meta "$iter_dir" "$current_iter" "$current_slot" "$plan_path" "$iter_start" "$iter_end" "$per_run_ms"
 
     write_progress "$run_dir" "$current_iter" "$total_iter" "cooldown" "$current_slot" "$failed_iters" "$run_start_ts" "$per_run_s" "$cooldown_s"
     sleep "$cooldown_s"
@@ -196,7 +221,7 @@ main() {
     log WARN "summarize.py not found — skipping"
   fi
 
-  # COMPLETED 마커 (Lock #5)
+  # COMPLETED 마커 (Lock #4)
   rm -f "$run_dir/RUNNING"
   cat > "$run_dir/COMPLETED" <<EOF
 completed_at=$(date -u +%FT%TZ)
