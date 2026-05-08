@@ -8,7 +8,7 @@ collect_prometheus() {
   local prom_url="$1" iter_dir="$2" iter_start="$3" iter_end="$4" manifest="$5"
   local prom_step
   prom_step=$(parse_duration "$(manifest_yq 'prom_step' "$manifest")")
-  [[ -z "$prom_step" || "$prom_step" == "null" ]] && prom_step=15
+  [[ -z "$prom_step" || "$prom_step" == "null" ]] && prom_step=1
 
   local q_count
   q_count=$(manifest_yq 'queries | length' "$manifest")

@@ -21,7 +21,7 @@
 | 7 | `max_failures` | int | ✓ | 누적 실패 iter ≥ 본 값이면 run 중단 (FAILED 마커) |
 | 8 | `plan_path` | string (path to Plan.json) | ✓ | PlanGenerator 출력 JSON 경로. 좌석 배정 시뮬레이션 결과 (requests·collision_groups·stats). |
 | 9 | `prom_url` | string (URL) | ✓ | Prometheus base URL (`http://192.168.138.2:9090`) |
-| 10 | `prom_step` | duration | ✓ | Prometheus query_range step (예: `15s`) |
+| 10 | `prom_step` | duration | ✓ | Prometheus query_range step (예: `1s`) |
 | 11 | `reset_path` | string (URL path) | ✓ | BE reset endpoint path (`/booking/init/:eventId`) |
 | 12 | `event_ids` | int[] | ✓ | reset 호출할 eventId 배열 (alternating 시 슬롯별 매칭) |
 | 13 | `queries` | object[] (`{name,promql,unit}`) | ✓ | summarize 대상 Prometheus 쿼리 목록 |

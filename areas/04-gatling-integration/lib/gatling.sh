@@ -79,25 +79,33 @@ build_vm_images() {
   shift
   local slot_names=("$@")
 
+  # 'git checkout <tree-ish> -- <file>' 은 파일을 stage 에 올린다.
+  # 이전 run 의 stack deploy 가 prometheus.yml 을 stage 에 남겨두면 다음 run 의
+  # git checkout -B 가 거부된다. git reset --hard HEAD 로 index+worktree 를 HEAD 로 리셋한다.
+  # VM repo 는 스크립트가 완전 관리하므로 --hard 는 안전하다.
+  local _hard_reset="git reset --hard HEAD 2>/dev/null || true"
+
   if [[ ${#slot_names[@]} -le 1 ]]; then
     # 단일 슬롯 — 메타 브랜치 (05 README § VM 빌드 3단계 — origin 강제 동기화)
-    ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -B 'bench/$manifest_id/meta' 'origin/bench/$manifest_id/meta' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
+    ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && $_hard_reset && git checkout -B 'bench/$manifest_id/meta' 'origin/bench/$manifest_id/meta' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
       || die "build_vm_images failed for $manifest_id"
   else
     for slot in "${slot_names[@]}"; do
       [[ -z "$slot" ]] && continue
-      ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -B 'bench/$manifest_id/$slot' 'origin/bench/$manifest_id/$slot' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id-$slot' back/" \
+      ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && $_hard_reset && git checkout -B 'bench/$manifest_id/$slot' 'origin/bench/$manifest_id/$slot' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id-$slot' back/" \
         || die "build_vm_images failed for $manifest_id/$slot"
     done
   fi
 
   # bench-stack/<id>.yml 가져와서 stack deploy (메타 브랜치 origin 기준)
   # git checkout origin/bench/$manifest_id/meta 로 origin 최신 파일을 직접 취득 (로컬 브랜치 캐시 우회)
-  ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/$manifest_id/meta' -- 'bench-stack/$manifest_id.yml' && docker stack deploy -c 'bench-stack/$manifest_id.yml' realticket" \
+  # stack deploy 후 git reset --hard 로 stage 를 정리해 다음 run 의 checkout 충돌 방지
+  ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && $_hard_reset && git checkout 'origin/bench/$manifest_id/meta' -- 'bench-stack/$manifest_id.yml' 'prometheus/prometheus.yml' && docker stack deploy -c 'bench-stack/$manifest_id.yml' realticket && git reset --hard HEAD" \
     || die "stack deploy failed for $manifest_id"
 
   # force-restart (areas/02-orchestration/README.md § 이미지 swap·stack restart 절차) — 안전판
   ssh "$VM_HOST" 'docker service update --force realticket_mysql' || true
+  ssh "$VM_HOST" 'docker service update --force realticket_prometheus' || true
   ssh "$VM_HOST" 'docker service update --force realticket_nest-baseline' || true
   ssh "$VM_HOST" 'docker service update --force realticket_nest-candidate' 2>/dev/null || true
   _wait_stack_healthy

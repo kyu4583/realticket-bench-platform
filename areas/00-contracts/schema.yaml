@@ -17,7 +17,7 @@
 #   7.  max_failures     int     ✓  누적 실패 ≥ → run 중단 (FAILED 마커)
 #   8.  plan_path        path    ✓  PlanGenerator 출력 JSON 경로 (좌석 배정 시뮬레이션 결과 JSON)
 #   9.  prom_url         URL     ✓  Prometheus base URL
-#  10.  prom_step        dur     ✓  query_range step (예: 15s)
+#  10.  prom_step        dur     ✓  query_range step (예: 1s)
 #  11.  reset_path       URL     ✓  BE reset endpoint path (`/booking/init/:eventId`)
 #  12.  event_ids        int[]   ✓  reset 호출할 eventId 배열
 #  13.  queries          obj[]   ✓  {name, promql, unit} — summarize 대상 PromQL
@@ -74,7 +74,7 @@ max_failures:   0
 plan_path:      "<path-to-Plan.json>"
 
 prom_url:       "http://192.168.138.2:9090"
-prom_step:      "15s"
+prom_step:      "1s"
 
 reset_path:     "/booking/init/:eventId"
 event_ids:

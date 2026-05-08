@@ -124,6 +124,8 @@ main() {
   prepare_gatling_branch "$MANIFEST_ID"
   # shellcheck disable=SC2086
   prepare_realticket_branches "$MANIFEST_ID" $slot_names
+  # shellcheck disable=SC2086
+  ensure_realticket_prometheus_scrape_interval "$MANIFEST_ID" $slot_names
   generate_bench_stack_yml "$MANIFEST_ID" "$manifest"
   # 메타 yml commit + 슬롯 cherry-pick 직후 origin push (VM build_vm_images 의 git fetch 가 본 push 의 직접 소비자)
   # shellcheck disable=SC2086

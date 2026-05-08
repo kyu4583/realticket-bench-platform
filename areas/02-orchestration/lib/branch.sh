@@ -43,6 +43,9 @@ prepare_realticket_branches() {
   local slot_names=("$@")
   local meta_br="bench/$manifest_id/meta"
   git -C "$REALTICKET_DIR" fetch origin
+  # prometheus.yml stat-cache dirty 방지: yq가 동일 내용을 재기록하면 mtime만 갱신돼
+  # git이 "modified"로 판정해 checkout을 거부한다. 내용이 같으므로 restore로 무해하게 해소.
+  git -C "$REALTICKET_DIR" checkout -- "prometheus/prometheus.yml" 2>/dev/null || true
   # 메타 브랜치 (항상 1개)
   if git -C "$REALTICKET_DIR" show-ref --verify --quiet "refs/heads/$meta_br"; then
     git -C "$REALTICKET_DIR" checkout "$meta_br"
@@ -71,6 +74,70 @@ prepare_realticket_branches() {
     git -C "$REALTICKET_DIR" checkout "$meta_br"
   fi
   log INFO "prepare_realticket_branches: meta + ${#slot_names[@]} slot branch(es) prepared"
+}
+
+ensure_realticket_prometheus_scrape_interval() {
+  local manifest_id="$1"
+  shift
+  local slot_names=("$@")
+  local target_interval="${REALTICKET_PROMETHEUS_SCRAPE_INTERVAL:-1s}"
+  local prometheus_config="prometheus/prometheus.yml"
+  local branches=("bench/$manifest_id/meta")
+
+  [[ "$target_interval" =~ ^[0-9]+(ms|s|m|h)$ ]] \
+    || die "ensure_realticket_prometheus_scrape_interval: invalid target interval '$target_interval'"
+
+  if [[ ${#slot_names[@]} -ge 2 ]]; then
+    local slot
+    for slot in "${slot_names[@]}"; do
+      [[ -z "$slot" ]] && continue
+      branches+=("bench/$manifest_id/$slot")
+    done
+  fi
+
+  local br
+  for br in "${branches[@]}"; do
+    git -C "$REALTICKET_DIR" checkout "$br" \
+      || die "ensure_realticket_prometheus_scrape_interval: checkout failed for $br"
+
+    [[ -f "$REALTICKET_DIR/$prometheus_config" ]] \
+      || die "ensure_realticket_prometheus_scrape_interval: missing $prometheus_config on $br"
+
+    if ! git -C "$REALTICKET_DIR" diff --quiet -- "$prometheus_config" \
+        || ! git -C "$REALTICKET_DIR" diff --cached --quiet -- "$prometheus_config"; then
+      die "ensure_realticket_prometheus_scrape_interval: $prometheus_config has pre-existing local changes on $br"
+    fi
+
+    # nest-app dns 타깃을 슬롯별 실제 서비스명으로 교체 (tasks.nest → tasks.nest-<slot>)
+    local _nest_names="" _sep=""
+    for _slot in "${slot_names[@]}"; do
+      [[ -z "$_slot" ]] && continue
+      _nest_names+="${_sep}\"tasks.nest-${_slot}\""
+      _sep=","
+    done
+    [[ -z "$_nest_names" ]] && _nest_names='"tasks.nest-baseline"'
+
+    yq -i \
+      "(.global.scrape_interval) = \"$target_interval\" | del(.scrape_configs[].scrape_interval) | (.scrape_configs[] | select(.job_name == \"nest-app\") | .dns_sd_configs[0].names) = [${_nest_names}]" \
+      "$REALTICKET_DIR/$prometheus_config" \
+      || die "ensure_realticket_prometheus_scrape_interval: yq update failed for $br"
+
+    if git -C "$REALTICKET_DIR" diff --quiet -- "$prometheus_config"; then
+      log INFO "ensure_realticket_prometheus_scrape_interval: $br no change (already up-to-date)"
+      # yq가 LF로 재기록해 Windows CRLF dirty 상태가 될 수 있으므로 git 버전으로 복원
+      git -C "$REALTICKET_DIR" checkout -- "$prometheus_config" 2>/dev/null || true
+    else
+      git -C "$REALTICKET_DIR" add "$prometheus_config" \
+        || die "ensure_realticket_prometheus_scrape_interval: add failed for $br"
+      git -C "$REALTICKET_DIR" commit --no-verify \
+        -m "bench: prometheus scrape_interval=${target_interval}, nest targets=[${_nest_names}]" \
+        || die "ensure_realticket_prometheus_scrape_interval: commit failed for $br"
+    fi
+  done
+
+  git -C "$REALTICKET_DIR" checkout "bench/$manifest_id/meta" \
+    || die "ensure_realticket_prometheus_scrape_interval: checkout back to meta failed"
+  log INFO "ensure_realticket_prometheus_scrape_interval: ${#branches[@]} branch(es) checked"
 }
 
 # ─── apply_untracked_overrides: untracked 파일 VM 적용 ───
@@ -128,6 +195,7 @@ push_realticket_branches_to_origin() {
   shift
   local slot_names=("$@")
   git -C "$REALTICKET_DIR" fetch origin
+  ensure_realticket_prometheus_scrape_interval "$manifest_id" "${slot_names[@]}"
   _push_one_realticket_branch "bench/$manifest_id/meta"
   if [[ ${#slot_names[@]} -ge 2 ]]; then
     for slot in "${slot_names[@]}"; do

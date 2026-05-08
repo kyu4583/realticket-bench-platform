@@ -277,6 +277,64 @@ if grep -q 'Services: mysql + nest-baseline + redis-master + prometheus + grafan
 else
   fail "템플릿 — default 값 누락"
 fi
+# bench target slots must stay symmetric except intentional identity/routing
+# fields. This protects baseline/candidate fairness in beta dual-slot manifests.
+if python3 - <<'PY' >/dev/null 2>&1
+import copy, sys, yaml
+
+def deep_merge(a, b):
+    out = copy.deepcopy(a)
+    for k, v in (b or {}).items():
+        if isinstance(out.get(k), dict) and isinstance(v, dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+def load(path):
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+def drop_path(doc, path):
+    cur = doc
+    for key in path[:-1]:
+        if not isinstance(cur, dict) or key not in cur:
+            return
+        cur = cur[key]
+    if isinstance(cur, dict):
+        cur.pop(path[-1], None)
+
+base = load("areas/02-orchestration/templates/docker-stack.base.yml")
+beta = load("areas/02-orchestration/templates/dimensions/beta-dual-slots.patch.yml")
+merged = deep_merge(base, beta)
+services = merged.get("services") or {}
+baseline = copy.deepcopy(services.get("nest-baseline") or {})
+candidate = copy.deepcopy(services.get("nest-candidate") or {})
+
+allowed_diffs = [
+    ("image",),
+    ("ports",),
+    ("environment", "APP_VERSION"),
+    ("deploy", "labels", "version"),
+]
+for path in allowed_diffs:
+    drop_path(baseline, path)
+    drop_path(candidate, path)
+
+if baseline != candidate:
+    print("nest-baseline/nest-candidate differ outside allowed image/port/version fields", file=sys.stderr)
+    sys.exit(1)
+
+limits = (((baseline.get("deploy") or {}).get("resources") or {}).get("limits") or {})
+if str(limits.get("cpus")) != "1" or str(limits.get("memory")) != "2G":
+    print(f"bench target resources invalid: {limits!r}", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  pass "templates -- nest baseline/candidate symmetry + cpu=1 memory=2G invariant"
+else
+  fail "templates -- nest baseline/candidate symmetry/resource invariant broken"
+fi
 # 4 토글 매핑 표 (templates/README.md)
 if grep -q 'alpha-test-account' areas/02-orchestration/templates/README.md && \
    grep -q 'beta-dual-slots' areas/02-orchestration/templates/README.md && \

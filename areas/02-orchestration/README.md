@@ -13,7 +13,7 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 | 1 | `parse_duration()` | util | `6h`·`10m`·`30s` ISO8601-like 문자열을 초 단위 정수로 변환 |
 | 2 | `manifest_yq()` | util | yq로 매니페스트 1 필드 조회. multi-document YAML 첫 문서만 파싱 |
 | 3 | `prepare_gatling_branch()` | branch | 구현 완료된 gatling repo `bench/<manifest_id>` 브랜치 체크아웃 + origin 동기화 |
-| 4 | `prepare_realticket_branches()` | branch | RealTicket repo 메타·슬롯 브랜치 분기 + yml commit + push |
+| 4 | `prepare_realticket_branches()` | branch | RealTicket repo 메타·슬롯 브랜치 분기 |
 | 5 | `generate_bench_stack_yml()` | branch | `areas/02-orchestration/templates/docker-stack.base.yml` → α/β/γ/δ 변형 → `bench-stack/<manifest_id>.yml` 생성 |
 | 6 | `apply_untracked_overrides()` | branch | VM에 git 미추적 빌드 파일 scp 적용 + 경로 목록 기록 |
 | 7 | `build_vm_images()` | branch | VM: 매니페스트 ID 브랜치 pull → Dockerfile.dev-in-local 빌드 → docker stack deploy |
@@ -39,6 +39,7 @@ implementation_plan preflight # status=completed + Gatling research/change_plan 
 prepare_gatling_branch()      # 3번 함수
 prepare_realticket_branches() # 4번 함수
 generate_bench_stack_yml()    # 5번 함수
+push_realticket_branches_to_origin()
 apply_untracked_overrides()   # 6번 함수
 build_vm_images()             # 7번 함수
 admin_login()                 # 8번 함수
@@ -109,10 +110,11 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 벤치마크 시점에 바뀌는 이미지와 stack 재시작은 본 영역 책임이다. VM의 Swarm·Prometheus·SSH 같은 고정 인프라는 06 영역에 남긴다.
 
 0. `generate_bench_stack_yml()`이 매니페스트의 4 기능 토글을 읽어 RealTicket repo의 `bench-stack/<manifest_id>.yml`을 생성한다.
-1. `prepare_realticket_branches()`가 메타·슬롯 브랜치에 동일 yml을 commit·push한다.
-2. `apply_untracked_overrides()`가 필요한 VM 미추적 빌드 파일만 명시 목록으로 배치한다.
-3. `build_vm_images()`가 VM에서 매니페스트 ID 브랜치를 pull하고 슬롯별 `nest:<manifest_id>` 이미지를 빌드한다.
-4. `build_vm_images()`가 `docker stack deploy -c bench-stack/<manifest_id>.yml realticket`로 stack을 갱신한다.
+1. `generate_bench_stack_yml()` 결과를 메타·슬롯 브랜치에 반영한다.
+2. `push_realticket_branches_to_origin()`가 메타·슬롯 브랜치의 `prometheus/prometheus.yml` scrape_interval=1s 를 보장한 뒤 push한다.
+3. `apply_untracked_overrides()`가 필요한 VM 미추적 빌드 파일만 명시 목록으로 배치한다.
+4. `build_vm_images()`가 VM에서 매니페스트 ID 브랜치를 pull하고 슬롯별 `nest:<manifest_id>` 이미지를 빌드한다.
+5. `build_vm_images()`가 meta 브랜치의 `bench-stack/<manifest_id>.yml` + `prometheus/prometheus.yml` 로 stack을 갱신하고 Prometheus 서비스를 재시작한다.
 
 실패 또는 종료 시 `rollback_untracked_overrides()`와 `restore_main_branches()`가 cleanup 경로에서 호출된다. 외부 repo 브랜치는 삭제하지 않는다.
 
@@ -143,7 +145,7 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 
 | 파일 | 담당 함수 |
 |------|---------|
-| `areas/02-orchestration/lib/branch.sh` | `prepare_gatling_branch()`, `prepare_realticket_branches()` |
+| `areas/02-orchestration/lib/branch.sh` | `prepare_gatling_branch()`, `prepare_realticket_branches()`, `ensure_realticket_prometheus_scrape_interval()` |
 | `areas/02-orchestration/lib/bench_stack.sh` | `generate_bench_stack_yml()` |
 | `areas/04-gatling-integration/lib/gatling.sh` | `run_gatling()`, `build_vm_images()` |
 | `areas/02-orchestration/lib/lifecycle.sh` | `admin_login()`, `reset_slots()`, iter 루프 |
@@ -153,7 +155,7 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 
 ## 불변 조건
 
-- `areas/02-orchestration/lib/branch.sh`와 `areas/02-orchestration/lib/lifecycle.sh`에 commit 명령 0건 — commit은 bench_stack.sh 책임
+- `areas/02-orchestration/lib/branch.sh`의 commit은 RealTicket bench 브랜치 `prometheus/prometheus.yml` scrape_interval 보정에만 허용. bench-stack yml commit은 bench_stack.sh 책임
 - `|| true` silent-mask 금지 — 실패는 `die` fail-fast
 - 외부 repo main/dev 직접 변경 금지 — 매니페스트 ID 브랜치에만 commit (Lock #2)
 - SSHFS·매크로·Postman 호출 추가 금지 (Lock #1)

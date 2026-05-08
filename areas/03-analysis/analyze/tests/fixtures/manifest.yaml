@@ -6,13 +6,13 @@ cooldown: "15s"
 max_failures: 1
 plan_path: "fixtures/Plan.json"
 prom_url: "http://127.0.0.1:9090"
-prom_step: "15s"
+prom_step: "1s"
 reset_path: "/booking/init/:eventId"
 event_ids:
   - 1
 queries:
   - name: "http_request_rate"
-    promql: "sum(rate(http_requests_total{job=\"nest-app\"}[1m]))"
+    promql: "sum(rate(http_requests_total{job=\"nest-app\"}[2s]))"
     unit: "req/s"
 slots:
   - name: "baseline"

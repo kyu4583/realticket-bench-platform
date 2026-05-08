@@ -23,7 +23,7 @@ max_failures:   1
 plan_path:      "app/src/gatling/resources/Plan.json"
 
 prom_url:       "http://192.168.138.2:9090"
-prom_step:      "15s"
+prom_step:      "1s"
 
 reset_path:     "/booking/init/:eventId"
 event_ids:
@@ -31,7 +31,7 @@ event_ids:
 
 queries:
   - name:    "http_request_rate"
-    promql:  "sum(rate(http_requests_total{job=\"nest-app\"}[1m]))"
+    promql:  "rate(http_requests_total{job=~\"nest-.*\"}[2s])"
     unit:    "req/s"
 
 slots:

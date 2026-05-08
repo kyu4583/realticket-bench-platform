@@ -18,7 +18,7 @@
 | (5) | **실행 모드 + 타이밍** | `iterations` (정수) XOR `duration` (`6h`·`10m`) 선택 + `warmup` + `cooldown` 입력. **`per_run` 은 묻지 않음** — Plan.json 자연 종료 후 02-orchestration 이 `ceil(simulation_duration_ms × 1.1)` 도출 ([00-contracts § per_run 도출 규칙](../00-contracts/README.md)) | `iterations`\|`duration`, `warmup`, `cooldown` |
 | (6) | **`event_ids`** | reset 호출할 RealTicket 이벤트 ID 배열 | `event_ids` |
 | (7) | **PlanConfig 확정 게이트** | PlanGenerator 실행 전에 필요한 `PlanConfig.json` 값을 확정한다. 이전 답변에서 derive 가능한 값은 제안·근거를 밝히고, 부하 강도·좌석 수·section 이동 등 derive 불가능한 값은 반드시 사용자에게 묻는다. 확정 결과는 `context.plan_config` 에 기록하고, 구현 세션 작업으로 `implementation_plan.gatling.change_plan` 에 `PlanConfig.json` 생성/수정 + PlanGenerator 실행을 포함한다. 상세 기준은 아래 § PlanConfig 확정 게이트와 [04-gatling § PlanConfig.json / Plan.json 핵심 필드](../04-gatling-integration/README.md) 참조 | (Gatling 측 — schema 직접 매핑 X) |
-| (8) | **`queries` 측정 지표** | Prometheus PromQL 목록 + `name` + `unit`. 표준 후보: `http_request_rate`, `http_error_rate`, Node process CPU/memory, event loop lag, GC. **응답 레이턴시는 Prometheus query 후보에 넣지 않고 Gatling `simulation.log` → `stats.json` 경로로 집계** | `queries[]` |
+| (8) | **`queries` 측정 지표** | Prometheus PromQL 목록 + `name` + `unit`. **응답 레이턴시는 Prometheus query 후보에 넣지 않고 Gatling `simulation.log` → `stats.json` 경로로 집계**. **두 계층으로 구성**: (A) NestJS `/metrics` — `http_request_rate`·`http_error_rate`·`event_loop_lag`·`gc_duration`, job 필터 `job=~"nest-.*"`, counter rate 윈도우 `[2s]`. (B) cAdvisor — `node_cpu`(`container_cpu_usage_seconds_total`, rate 윈도우 `[4s]`)·`node_memory`(`container_memory_rss`), 필터 `job="cadvisor",name=~"realticket_nest.*"`. cAdvisor는 고부하 시에도 컨테이너 외부에서 수집하므로 scrape 신뢰도가 높음 | `queries[]` |
 | (9) | **`hypotheses` PASS/FAIL 기준 (선택)** | candidate vs baseline 비교 식. 가설 없으면 절 자체 미생성 | `hypotheses[]` |
 | (10) | **외부 repo 코드 리서치 + 구현 계획 기록** | 사용자 입력 수집 완료 후 Gatling 코드베이스 리서치 에이전트를 read-only 로 호출한다. 에이전트는 repo 상태, 관련 파일, 기본 4종 mode 충족 가능 여부, 커스텀 mode 필요성, PlanConfig 생성 경로, 최소 변경 경로, acceptance check, risk 를 분석한다. 결과를 매니페스트 `implementation_plan.gatling` 에 전부 기록하고 RealTicket/git 작업도 같은 `implementation_plan:` 절에 기록한다. **즉시 구현 X** — 구현은 별도 세션에서 순서대로 실행 | `implementation_plan` |
 
@@ -88,7 +88,7 @@ PlanConfig 게이트가 미확정이면 PlanGenerator 실행 계획을 `done: tr
 | `run_id_prefix` | `= manifest_id` (관례 — 명시적 다른 값 요청 없으면) |
 | `max_failures` | `2` (m1 기본 정책 — 사용자 별도 요청 없으면) |
 | `prom_url` | `http://192.168.138.2:9090` (VM 고정) |
-| `prom_step` | `15s` |
+| `prom_step` | `1s` |
 | `reset_path` | `/booking/init/:eventId` |
 | `plan_path` | `app/src/gatling/resources/Plan.json` (Gatling repo 관례 경로) |
 | `slots[].targetUrl` | **1-슬롯**: `http://192.168.138.2:8080`. **2-슬롯** (β 자동 forced=true): baseline=`http://192.168.138.2:8080` · candidate=`http://192.168.138.2:8081` — **두 슬롯 동일 포트 사용 금지** (β=true 의 nest-candidate 서비스가 8081 에 뜨므로) |

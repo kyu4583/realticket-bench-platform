@@ -17,6 +17,8 @@
 
 **nest 빌드 invariant:** 모든 차원 조합에서 nest 빌드 = `back/Dockerfile.dev-in-local`. base.yml 의 `nest-baseline.build` 와 β patch 의 `nest-candidate.build` 둘 다 동일 Dockerfile. α patch 는 nest Dockerfile 변경 X.
 
+**bench target resource invariant:** 벤치 대상 nest 슬롯은 반드시 `deploy.resources.limits.cpus: "1"` 과 `memory: 2G` 를 가진다. 2-slot 비교에서는 `nest-baseline` 과 `nest-candidate` 모두 같은 CPU/memory limit 이 적용되어야 한다.
+
 ## 단일 변환 흐름
 
 `areas/02-orchestration/lib/bench_stack.sh:generate_bench_stack_yml` 가 다음 6 단계를 수행한다 (단일 흐름·차원별 case 분기 0건):

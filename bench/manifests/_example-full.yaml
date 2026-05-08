@@ -36,7 +36,7 @@ max_failures:   2
 plan_path:      "app/src/gatling/resources/Plan.json"
 
 prom_url:       "http://192.168.138.2:9090"
-prom_step:      "15s"
+prom_step:      "1s"
 
 reset_path:     "/booking/init/:eventId"
 event_ids:
@@ -44,21 +44,26 @@ event_ids:
   - 2
 
 queries:
+  # NestJS /metrics — 애플리케이션 수준 지표
   - name:    "http_request_rate"
-    promql:  "sum(rate(http_requests_total{job=\"nest-app\"}[1m]))"
+    promql:  "rate(http_requests_total{job=~\"nest-.*\"}[2s])"
     unit:    "req/s"
   - name:    "http_error_rate"
-    promql:  "sum(rate(http_requests_total{job=\"nest-app\", status=~\"5..\"}[1m]))"
+    promql:  "rate(http_requests_total{job=~\"nest-.*\",status=~\"5..\"}[2s])"
     unit:    "req/s"
-  - name:    "node_heap_used_bytes"
-    promql:  "avg(nodejs_heap_size_used_bytes{job=\"nest-app\"})"
-    unit:    "bytes"
-  - name:    "process_cpu_rate"
-    promql:  "avg(rate(process_cpu_seconds_total{job=\"nest-app\"}[1m]))"
-    unit:    "cores"
-  - name:    "eventloop_lag_p99_seconds"
-    promql:  "avg(nodejs_eventloop_lag_p99_seconds{job=\"nest-app\"})"
+  - name:    "event_loop_lag"
+    promql:  "nodejs_eventloop_lag_seconds{job=~\"nest-.*\"}"
     unit:    "seconds"
+  - name:    "gc_duration"
+    promql:  "rate(nodejs_gc_duration_seconds_sum{job=~\"nest-.*\"}[2s])"
+    unit:    "seconds"
+  # cAdvisor — 컨테이너 외부 수집 (고부하 영향 없음)
+  - name:    "node_cpu"
+    promql:  "sum(rate(container_cpu_usage_seconds_total{job=\"cadvisor\",name=~\"realticket_nest.*\"}[4s]))"
+    unit:    "cores"
+  - name:    "node_memory"
+    promql:  "sum(container_memory_rss{job=\"cadvisor\",name=~\"realticket_nest.*\"})"
+    unit:    "bytes"
 
 # Lock #3 alternating: slots[] = 2 (≤2). 두 슬롯 *동시* 부하 금지, *번갈아* 측정.
 slots:
