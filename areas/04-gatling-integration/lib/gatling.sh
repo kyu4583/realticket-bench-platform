@@ -80,13 +80,13 @@ build_vm_images() {
   local slot_names=("$@")
 
   if [[ ${#slot_names[@]} -le 1 ]]; then
-    # 단일 슬롯 — 메타 브랜치
-    ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -- . && git checkout 'bench/$manifest_id/meta' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
+    # 단일 슬롯 — 메타 브랜치 (05 README § VM 빌드 3단계 — origin 강제 동기화)
+    ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -B 'bench/$manifest_id/meta' 'origin/bench/$manifest_id/meta' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
       || die "build_vm_images failed for $manifest_id"
   else
     for slot in "${slot_names[@]}"; do
       [[ -z "$slot" ]] && continue
-      ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -- . && git checkout 'bench/$manifest_id/$slot' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id-$slot' back/" \
+      ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && git checkout -B 'bench/$manifest_id/$slot' 'origin/bench/$manifest_id/$slot' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id-$slot' back/" \
         || die "build_vm_images failed for $manifest_id/$slot"
     done
   fi
@@ -100,8 +100,30 @@ build_vm_images() {
   ssh "$VM_HOST" 'docker service update --force realticket_mysql' || true
   ssh "$VM_HOST" 'docker service update --force realticket_nest-baseline' || true
   ssh "$VM_HOST" 'docker service update --force realticket_nest-candidate' 2>/dev/null || true
-  # STACK_SETTLE_S 환경변수로 override 가능 (기본 30초)
-  local stack_settle_s="${STACK_SETTLE_S:-30}"
-  sleep "$stack_settle_s"
-  log INFO "build_vm_images: build + stack deploy + force-restart completed for $manifest_id (settled ${stack_settle_s}s)"
+  _wait_stack_healthy
+  log INFO "build_vm_images: build + stack deploy + force-restart + health check completed for $manifest_id"
+}
+
+# ─── _wait_stack_healthy: realticket 스택 모든 서비스 REPLICAS N/N 확인 ───
+# STACK_HEALTH_TIMEOUT_S (기본 90초) 초과 시 die
+_wait_stack_healthy() {
+  local timeout_s="${STACK_HEALTH_TIMEOUT_S:-90}"
+  local interval=5
+  local deadline=$(( $(date +%s) + timeout_s ))
+  log INFO "_wait_stack_healthy: polling realticket stack (timeout=${timeout_s}s, interval=${interval}s)"
+  while [[ $(date +%s) -le $deadline ]]; do
+    local replicas_out svc_count unhealthy
+    replicas_out=$(ssh "$VM_HOST" \
+      "docker service ls --filter name=realticket --format '{{.Replicas}}'" 2>/dev/null) || replicas_out=""
+    svc_count=$(printf '%s\n' "$replicas_out" | grep -c '[0-9]' 2>/dev/null || echo 0)
+    unhealthy=$(printf '%s\n' "$replicas_out" \
+      | awk -F'/' 'NF>=2 && $1+0 < $2+0 {c++} END {print c+0}')
+    if [[ "$svc_count" -gt 0 && "$unhealthy" -eq 0 ]]; then
+      log INFO "_wait_stack_healthy: all ${svc_count} realticket service(s) healthy (replicas matched)"
+      return 0
+    fi
+    log INFO "_wait_stack_healthy: ${unhealthy}/${svc_count} not ready — retry in ${interval}s"
+    sleep "$interval"
+  done
+  die "_wait_stack_healthy: stack not healthy after ${timeout_s}s — run 'docker service ls' on VM to investigate"
 }

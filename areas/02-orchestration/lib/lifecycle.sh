@@ -150,16 +150,16 @@ cleanup_on_exit() {
   if [[ "${cleanup_external_repos:-0}" == "1" ]]; then
     if declare -f rollback_untracked_overrides >/dev/null 2>&1; then
       timeout 30 bash -c '
-        source "$BENCH_ROOT/lib/util.sh"
-        source "$BENCH_ROOT/lib/branch.sh"
+        source "$SCRIPT_DIR/lib/util.sh"
+        source "$SCRIPT_DIR/lib/branch.sh"
         rollback_untracked_overrides "${run_dir:-}"
       ' 2>/dev/null \
         || log WARN "cleanup: rollback_untracked_overrides timed out / failed"
     fi
     if declare -f restore_main_branches >/dev/null 2>&1; then
       timeout 15 bash -c '
-        source "$BENCH_ROOT/lib/util.sh"
-        source "$BENCH_ROOT/lib/branch.sh"
+        source "$SCRIPT_DIR/lib/util.sh"
+        source "$SCRIPT_DIR/lib/branch.sh"
         restore_main_branches
       ' 2>/dev/null \
         || log WARN "cleanup: restore_main_branches timed out / failed"
@@ -172,8 +172,8 @@ cleanup_on_exit() {
     # 실패는 log WARN (die 금지) — run 자체는 정상 종료.
     if [[ -n "${REALTICKET_DIR:-}" && -d "$REALTICKET_DIR/.git" ]]; then
       timeout 15 bash -c '
-        source "$BENCH_ROOT/lib/util.sh"
-        source "$BENCH_ROOT/lib/branch.sh"
+        source "$SCRIPT_DIR/lib/util.sh"
+        source "$SCRIPT_DIR/lib/branch.sh"
         if [[ -n "$(git -C "$REALTICKET_DIR" status --porcelain 2>/dev/null)" ]]; then
           run_id="$(basename "${run_dir:-unknown}")"
           log WARN "cleanup: RealTicket dev working tree dirty — auto-stashing as bench-cleanup-$run_id"

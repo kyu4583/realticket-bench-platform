@@ -5,11 +5,55 @@ Source:
   areas/03-analysis/README.md § 3 분석 모듈
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json, re, sys
 from pathlib import Path
 from typing import Any
 
 FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
+
+
+_TR_REQ = re.compile(r'<tr\s+id="req_[^"]*"[^>]*>(.*?)</tr>', re.DOTALL)
+_ELLIPSED = re.compile(r'class="ellipsed-name">([^<]+)</span>')
+_COL_VAL = re.compile(r'class="value[^"]*\bcol-(\d+)"[^>]*>([\d.]+)<')
+
+
+def _parse_html_stats(iter_dir: str) -> dict[str, Any]:
+    """Gatling 3.14+ binary simulation.log 대응 fallback.
+
+    gatling-report/index.html 통계 테이블에서 per-request 집계값 추출.
+    col 매핑 (Gatling 3.14 HTML report 기준):
+      2=total 3=ok 4=ko 5=%ko 6=cnt/s 7=min 8=p50 9=p75 10=p95 11=p99 12=max 13=mean
+    """
+    html_path = Path(iter_dir) / "gatling-report" / "index.html"
+    if not html_path.exists():
+        return {}
+    content = html_path.read_text(encoding="utf-8", errors="replace")
+    out: dict[str, Any] = {}
+    for tr_m in _TR_REQ.finditer(content):
+        row = tr_m.group(1)
+        name_m = _ELLIPSED.search(row)
+        if not name_m:
+            continue
+        req_name = name_m.group(1).strip()
+        cols: dict[int, float] = {}
+        for col_m in _COL_VAL.finditer(row):
+            cols[int(col_m.group(1))] = float(col_m.group(2))
+        total = int(cols.get(2, 0))
+        ok    = int(cols.get(3, 0))
+        ko    = int(cols.get(4, 0))
+        if total == 0:
+            continue
+        out[req_name] = {
+            "p50": cols.get(8, 0.0),
+            "p75": cols.get(9, 0.0),
+            "p95": cols.get(10, 0.0),
+            "p99": cols.get(11, 0.0),
+            "ok": ok,
+            "ko": ko,
+            "failure_rate": ko / max(1, total),
+            "source": "html_report",
+        }
+    return out
 
 
 def _decode_request_name(s: str) -> str:
@@ -76,6 +120,10 @@ def parse_iter_stats(iter_dir: str) -> dict[str, Any]:
             "p50": pct(0.5), "p75": pct(0.75), "p95": pct(0.95), "p99": pct(0.99),
             "ok": ok, "ko": ko, "failure_rate": ko / max(1, total),
         }
+
+    # simulation.log 에서 REQUEST 0건 → Gatling 3.14+ binary 포맷 의심 → HTML fallback
+    if not out:
+        out = _parse_html_stats(iter_dir)
 
     # atomic write
     out_path = Path(iter_dir) / "stats.json"
