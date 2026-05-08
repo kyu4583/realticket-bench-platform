@@ -9,8 +9,8 @@
 schema 정의와 작성 가이드의 단일 진실은 영역 문서에 lock — 본 README 는 *link O · 재진술 X*.
 
 - Manifest Schema (15 core fields + optional objects): [`areas/00-contracts/README.md`](../../areas/00-contracts/README.md) — core fields enumeration · 타입 · required · 의미 단일 진실
-- 매니페스트 작성 가이드: [`areas/01-planning/README.md`](../../areas/01-planning/README.md) — scenario 설계 원칙 + α/β/γ 질문 흐름
-- `slots[].scenario_mode` override: [`areas/04-gatling-integration/README.md`](../../areas/04-gatling-integration/README.md) — `Config.java` default `LOGIN_ONLY` + 6 enum
+- 매니페스트 작성 가이드: [`areas/01-planning/README.md`](../../areas/01-planning/README.md) — scenario 설계 원칙 + α/β/γ/δ 질문 흐름 + PlanConfig 확정 게이트
+- `slots[].scenario_mode` override + PlanConfig 계약: [`areas/04-gatling-integration/README.md`](../../areas/04-gatling-integration/README.md) — `Config.java` default `LOGIN_ONLY`, `PlanConfig.json` 입력, PlanGenerator 실행 전 확인 게이트
 
 > **Example quarantine:** `_example-*.yaml` 의 커스텀 `scenario_mode` 값은 schema 시연용 placeholder다. 신규 매니페스트 작성 시 복사하지 않는다. 실제 `slots[].scenario_mode` 값은 사용자가 명시 입력하거나 AI 제안을 사용자가 확인한 경우에만 기록한다. 미확정이면 필드를 생략하고 `implementation_plan.gatling.scenario_decisions` 에 pending 결정으로 남긴다.
 
@@ -29,12 +29,13 @@ schema의 기계 가독 placeholder는 `areas/00-contracts/schema.yaml`에 둔�
 
 ## 작성 흐름
 
-1. `areas/01-planning/README.md § Scenario 설계 원칙` 의 결정 순서를 사용자에게 질문 (AI 가 진행)
-2. 답변에서 `manifest_id` derive (명명 규칙: 영문자·숫자·하이픈·언더스코어)
+1. `areas/01-planning/README.md § 매니페스트 수집 흐름 10단계` 의 순서대로 사용자에게 질문 (AI 가 진행)
+2. `manifest_id` 는 사용자에게 명시 입력으로 받고, 비교 변수와 별도 turn 으로 확정
 3. α/β/γ/δ 차원 질문 → bench-stack yml 변형 결정
-4. `bench/manifests/<manifest_id>.yaml` 생성 (15 core fields + optional `bench_stack`·`context`·`implementation_plan`·`workflow_state`)
-5. 구현 세션마다 `workflow_state` 의 `current_task_ref`·`last_completed`·`next_action` 갱신
-6. `workflow_state.status: ready_to_run` 이 되면 `bash areas/02-orchestration/run.sh bench/manifests/<manifest_id>.yaml` 실행
+4. PlanGenerator 실행 전에 `PlanConfig.json` 설정값을 확정하고, 확정값·derive값·미확정값을 `context.plan_config` 에 기록
+5. `bench/manifests/<manifest_id>.yaml` 생성 (15 core fields + optional `bench_stack`·`context`·`implementation_plan`·`workflow_state`)
+6. 구현 세션마다 `workflow_state` 의 `current_task_ref`·`last_completed`·`next_action` 갱신
+7. `workflow_state.status: ready_to_run` 이 되면 `bash areas/02-orchestration/run.sh bench/manifests/<manifest_id>.yaml` 실행
 
 `workflow_state` 는 실행 전 재개 포인터다. `run.sh` 실행 이후의 진행률은 매니페스트가 아니라 `bench/results/<manifest_id>/<run_id>/progress.json` 과 마커 파일을 확인한다.
 

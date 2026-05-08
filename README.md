@@ -26,7 +26,7 @@
 
 **AI가 자동으로 수행하는 것:**
 
-1. 매니페스트 수집 — 사용자에게 9단계 질문으로 벤치마크 설계 완성
+1. 매니페스트 수집 — 사용자에게 10단계 질문으로 벤치마크 설계 완성
 2. Gatling 코드베이스 read-only 리서치 → `implementation_plan.gatling` 기록 + `workflow_state` 재개 포인터 초기화
 3. 구현 세션에서 docker stack 정의·Gatling 코드·RealTicket 브랜치 준비
 4. VM SSH → 이미지 빌드 → docker stack deploy

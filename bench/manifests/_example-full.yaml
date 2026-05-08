@@ -17,7 +17,7 @@
 #
 # 출처:
 #   areas/00-contracts/schema.yaml § 15 core fields + optional objects (yaml 형태 참조)
-#   areas/04-gatling-integration/README.md § -P 키 표 (scenario_mode 6 enum)
+#   areas/04-gatling-integration/README.md § -P 키 표 + PlanConfig 계약
 #   areas/00-contracts/README.md § Manifest Schema (단일 진실)
 #
 # Lock #3 (alternating only): slots[] = 2, 두 슬롯 *번갈아* 측정 — concurrent dual 미지원.
@@ -94,7 +94,14 @@ context:
     branch: "feat/section-reconnect"
     notes:  "SSE 연결 시 ?section=N 파라미터 지정. section 이동 시 SSE close + reconnect"
   region_flow:  "auth_check → 30s 대기 → subscribe → main_booking"
-  plan_config:  "기존 PlanConfig.json 기본값 사용"
+  plan_config: >
+    confirmed: num_users=500, seats_per_user=2, request_delay_mean=2000ms,
+    request_delay_min=500ms, request_delay_skew=1, sections=synthetic 3 sections,
+    section_move_count=1, section_move_delay_mean_ms=1500,
+    section_move_target_strategy=round_robin.
+    derived: seed=4586 fixed for baseline/candidate parity,
+    snapshot_interval=500, network_delay=50, no_collision=true.
+    unresolved: none before PlanGenerator execution.
 
 # ─── 구현 계획 ────────────────────────────────────────────────────────────
 # 이 예시는 구현 완료 상태(status: completed). 실제 작성 직후에는 status: "pending".

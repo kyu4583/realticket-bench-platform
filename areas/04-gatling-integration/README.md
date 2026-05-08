@@ -47,23 +47,57 @@ region 모델 정의는 [00-contracts/README.md](../00-contracts/README.md) § R
 
 ### PlanConfig.json (입력)
 
+현재 PlanGenerator 입력은 `config` + `sections` 구조다. 과거의 `regions/actions` 입력 모델은 사용하지 않는다.
+
 ```json
 {
-  "config": { "num_users": 500, "seed": 4586, ... },
-  "regions": [
-    { "name": "booking", "duration_ms": 300000, "actions": [{"kind": "book_seats"}] }
+  "config": {
+    "num_users": 500,
+    "seats_per_user": 2,
+    "seed": 4586,
+    "snapshot_interval": 500,
+    "network_delay": 50,
+    "request_delay_mean": 2000,
+    "request_delay_min": 500,
+    "request_delay_skew": 1,
+    "no_collision": true,
+    "section_move_count": 1,
+    "section_move_target_strategy": "round_robin"
+  },
+  "sections": [
+    { "col_len": 50, "seats": [1, 1, 1, 1] }
   ]
 }
 ```
+
+PlanConfig는 매니페스트 schema의 core field가 아니지만, PlanGenerator 실행 전에 확정되어야 하는 Gatling 입력 계약이다. 사용자 수·좌석 수·요청 간격·좌석 fixture는 부하 모델 자체를 바꾸므로 AI가 임의로 숨겨진 기본값을 쓰면 안 된다.
+
+> **PlanGenerator 4452d086 계약:** `section_move_delay_*` 입력은 폐기됐다. `book` 과 `section_move` 는 하나의 이벤트 큐에서 `request_delay_mean` / `request_delay_min` / `request_delay_skew` 를 공통 간격으로 사용하며, 유저의 `book` 요청은 현재 section 안의 좌석만 선택할 수 있다.
+
+### PlanConfig 설정 책임 분류
+
+| 필드 | 책임 | 운영 규칙 |
+|---|---|---|
+| `num_users` | 사용자 확인 필수 | 동시 사용자 수. 답변이 없으면 PlanGenerator 실행 전 질문한다. |
+| `seats_per_user` | 사용자 확인 필수 | 요청 수와 좌석 점유량을 바꾼다. smoke 검증만 예외적으로 1~2를 제안 가능. |
+| `request_delay_mean` / `request_delay_min` / `request_delay_skew` | 사용자 확인 + AI 보조 | 평균은 반드시 확인. min/skew는 평균과 실험 목적을 근거로 제안하고 기록한다. 이 간격은 `book` 과 `section_move` 에 공통 적용된다. |
+| `sections` | 사용자 확인 필수 | 실제 event 좌석 fixture를 쓸지, synthetic fixture를 쓸지 확정한다. section 이동 실험이면 최소 2 section 필요. `book` 은 현재 section 안에서만 좌석을 고르므로, target strategy 로 방문하는 section 별 수용량이 부하를 감당하는지 확인한다. |
+| `seed` | 확인 또는 deterministic derive | 사용자가 지정하지 않으면 `manifest_id` 기반 고정 seed를 제안한다. baseline/candidate는 같은 seed를 사용한다. |
+| `no_collision` | 목적 기반 확인 | 충돌이 측정 대상이 아니면 `true`를 제안한다. 충돌/재시도 측정이면 `false` 여부를 확인한다. |
+| `section_move_count` | 목적 기반 확인 + 기본 제안 | 유저당 section 이동 횟수. section 이동이 비교 변수면 사용자 확인 필수. 별도 값이 없으면 `max(1, floor(seats_per_user / 2))` 를 제안한다. section 이동을 제외한 smoke/no-move 시나리오만 `0` 으로 override 가능. |
+| `section_move_target_strategy` | 사용자 확인 + AI 보조 | 이동 횟수가 0으로 override된 경우만 무시. 이동이 있으면 `round_robin`/`random` 의도를 확인한다. 별도 section 이동 간격 필드는 없으며, 이동 간격은 `request_delay_*` 를 따른다. |
+| `snapshot_interval` / `network_delay` | 기본값 가능 | 별도 실험 의도가 없으면 각각 500/50 유지. 변경 시 이유를 `context.plan_config`에 기록한다. |
 
 ### Plan.json (PlanGenerator.py 출력) — 핵심 필드
 
 | 경로 | 타입 | 의미 |
 |------|------|------|
-| `stats.simulation_duration_ms` | int | 전체 시뮬레이션 시간 ms |
+| `stats.simulation_duration_ms` | int | 전체 시뮬레이션 시간 ms. `book` 과 `section_move` 를 포함한 마지막 요청 시각 기준 |
 | `stats.num_users` / `seats_per_user` | int | 시뮬레이션 파라미터 |
 | `requests[].type` | string | `book` \| `section_move` |
 | `requests[].time_ms` | int | 요청 발생 시각 (시뮬레이션 기준 ms) |
+| `requests[].section` | int | `book` 은 현재 section, `section_move` 는 이동 전 section |
+| `requests[].target_section` | int? | `section_move` 전용 이동 대상 section |
 
 ---
 
@@ -96,6 +130,9 @@ region 모델 정의는 [00-contracts/README.md](../00-contracts/README.md) § R
   ```bash
   git -C <gatling_dir> restore app/src/gatling/resources/tests/snapshots/
   ```
+- PlanConfig 확정 게이트 완료 여부 — `num_users`, `seats_per_user`, 요청 간격, 좌석 fixture, seed, section_move 설정이 `context.plan_config` 에 기록되어 있어야 함
+- PlanConfig에 `section_move_delay_mean_ms` / `section_move_delay_min_ms` / `section_move_delay_skew` 를 새로 넣지 않았는지 확인 — 4452d086 이후 PlanGenerator 입력 계약이 아님
+- section 이동 실험이면 target strategy 로 방문하는 section 별 좌석 수가 `no_collision=true` 계획을 자연 종료시킬 만큼 충분한지 확인
 - PlanGenerator.py selftest 3케이스 통과 여부
   ```bash
   (cd <gatling_dir>/app/src/gatling/resources && python PlanGenerator.py --selftest)
@@ -155,7 +192,7 @@ phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts
 
 | 토글 | Gatling 코드 의무 변경 |
 |------|----------------------|
-| `alpha_test_account: true` | `Config.java`(또는 동등 설정)에서 `TEST_ACCOUNT_ALREADY_STORED` 옵션 활성화. 커스텀 시나리오 모드의 plan `actions`에서 `login` 액션 생략 필수. |
+| `alpha_test_account: true` | `Config.java`(또는 동등 설정)에서 `TEST_ACCOUNT_ALREADY_STORED` 옵션 활성화. 커스텀 시나리오 모드에서도 로그인 요청 생략 필수. |
 | `beta_dual_slots: true` | 변경 없음 (포트 8081 서비스 추가는 bench-stack yml 측 — Gatling은 `-PtargetUrl`로 분기) |
 | `gamma_sentinel: true` | 변경 없음 (Redis Sentinel 구성은 stack 측) |
 | `delta_autoscaler: true` | 변경 없음 (autoscaler 서비스는 stack 측) |
@@ -166,7 +203,7 @@ phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts
 
 체크리스트:
 - [ ] `Config.java`(또는 설정 클래스)에서 `TEST_ACCOUNT_ALREADY_STORED = true` 확인 → 기본 4종 모드(`DYNAMIC`/`STATIC`/`PARALLEL`/`LOGIN_ONLY`)에서 로그인 자동 비활성화 (별도 코드 변경 불필요)
-- [ ] 커스텀 시나리오 모드 구현 시 PlanConfig.json `actions`에 `login` 액션 생략 필수 (커스텀 코드는 플래그 적용 범위 밖이므로 직접 제외해야 함)
+- [ ] 커스텀 시나리오 모드 구현 시 로그인 요청 생략 필수 (커스텀 코드는 플래그 적용 범위 밖일 수 있으므로 직접 확인해야 함)
 
 ---
 
@@ -196,11 +233,12 @@ phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts
 **구현 세션:**
 1. `implementation_plan.gatling.change_plan` 을 읽고 `bench/<manifest_id>` 브랜치 분기
 2. 매니페스트 의도에 맞는 코드 변경 (ScenarioMode, Config.java, PlanConfig/PlanGenerator 입력 등)
-3. PlanGenerator 실행 → Plan.json 생성
-4. acceptance_checks 수행
-5. commit + origin push
-6. 매니페스트의 `implementation_plan.gatling.change_plan[].done` 과 `workflow_state` 갱신
-7. Gatling 쪽 작업이 모두 끝나면 다음 미완료 RealTicket/git 작업을 `workflow_state.current_task_ref` 와 `next_action` 에 기록한다. 전체 실행 전 작업이 끝났을 때만 최상위 `implementation_plan.status: completed` 로 갱신
+3. `context.plan_config` 의 확정값으로 `PlanConfig.json` 생성/수정. 미확정 항목이 있으면 사용자에게 먼저 질문하고, 매니페스트의 `context.plan_config` 와 `workflow_state` 를 갱신
+4. PlanGenerator 실행 → Plan.json 생성
+5. acceptance_checks 수행
+6. commit + origin push
+7. 매니페스트의 `implementation_plan.gatling.change_plan[].done` 과 `workflow_state` 갱신
+8. Gatling 쪽 작업이 모두 끝나면 다음 미완료 RealTicket/git 작업을 `workflow_state.current_task_ref` 와 `next_action` 에 기록한다. 전체 실행 전 작업이 끝났을 때만 최상위 `implementation_plan.status: completed` 로 갱신
 
 **매니페스트 실행 중:**
 - 본 브랜치 체크아웃 상태 유지 + `./gradlew gatlingRunAndArchive -P<keys>` 호출
@@ -219,4 +257,5 @@ phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts
 
 - gatling main 영구 변경 금지
 - 화이트리스트 외 -P 키 주입 금지
+- PlanConfig 확정값 없이 PlanGenerator 실행 금지
 - 외부 repo README/CLAUDE.md 수정 금지

@@ -8,7 +8,7 @@
 처음 접하는 경우 아래 순서를 따른다:
 
 1. **[00-contracts/README.md](./00-contracts/README.md)** — 전체 플랫폼의 공통 언어(manifest schema·region/slot/iteration 모델·결과 디렉토리 구조·용어집). 다른 영역을 읽기 전에 반드시 먼저 확인
-2. **[01-planning/README.md](./01-planning/README.md)** — AI가 사용자로부터 매니페스트를 수집하는 9단계 흐름
+2. **[01-planning/README.md](./01-planning/README.md)** — AI가 사용자로부터 매니페스트를 수집하는 10단계 흐름
 3. **[02-orchestration/README.md](./02-orchestration/README.md)** — run.sh 17 함수 + 브랜치 라이프사이클 + fire-and-forget
 4. **[03-analysis/README.md](./03-analysis/README.md)** — 3 분석 모듈(parse·prom_query·summarize)과 결과 해석
 5. **[04-gatling-integration/README.md](./04-gatling-integration/README.md)** — Gatling repo 인터페이스 · -P 키 · 브랜치 격리
@@ -20,7 +20,7 @@
 | # | 영역 | 파일 | AI 개입 빈도 | 핵심 책임 |
 |---|------|------|-------------|---------|
 | 00 | contracts | [00-contracts/README.md](./00-contracts/README.md) | 읽기 전용 (정의 참조) | manifest schema 15 core fields + optional objects · region/slot/iteration 모델 · 결과 디렉토리 구조 · 용어집 |
-| 01 | planning | [01-planning/README.md](./01-planning/README.md) | 매니페스트 시작 시 | 사용자 질문 수집 9단계 · Gatling read-only 리서치 · 구현 계획 자동 생성 · 실행 전 재개 상태 |
+| 01 | planning | [01-planning/README.md](./01-planning/README.md) | 매니페스트 시작 시 | 사용자 질문 수집 10단계 · PlanConfig 확정 게이트 · Gatling read-only 리서치 · 구현 계획 자동 생성 · 실행 전 재개 상태 |
 | 02 | orchestration | [02-orchestration/README.md](./02-orchestration/README.md) | 매니페스트 실행 전·중·후 | run.sh 17 함수 · fire-and-forget · 브랜치 분기·복귀 |
 | 03 | analysis | [03-analysis/README.md](./03-analysis/README.md) | 실행 완료 후 결과 확인 시 | parse·prom_query·summarize 3 모듈 · SUMMARY.md 생성 |
 | 04 | gatling-integration | [04-gatling-integration/README.md](./04-gatling-integration/README.md) | 매니페스트별 브랜치 격리 | gatling repo 계약 · -P 키 표 · ScenarioMode 6개 |
