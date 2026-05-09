@@ -83,12 +83,12 @@ get_slot_for_iter() {
 # Source: 02-RESEARCH § Code Examples 라인 687-700 (04-03-SUMMARY § write_progress)
 write_progress() {
   local run_dir="$1" current_iter="$2" total_iter="$3" phase="$4" \
-        slot="$5" failed_iters="$6" run_start_ts="$7" per_run_s="$8" cooldown_s="$9"
+        slot="$5" failed_iters="$6" run_start_ts="$7" iter_estimate_s="$8" cooldown_s="$9"
   local remaining=$(( total_iter - current_iter ))
   [[ $remaining -lt 0 ]] && remaining=0
   local now eta_epoch eta
   now=$(date +%s)
-  eta_epoch=$(( now + remaining * (per_run_s + cooldown_s) ))
+  eta_epoch=$(( now + remaining * (iter_estimate_s + cooldown_s) ))
   eta=$(date -u -d "@$eta_epoch" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
   jq -n \
     --argjson ci "$current_iter" --argjson ti "$total_iter" \
@@ -106,11 +106,20 @@ write_progress() {
 write_iter_meta() {
   local iter_dir="$1" iter_num="$2" slot="$3" plan_path="$4" \
         iter_start_epoch="$5" iter_end_epoch="$6" per_run_ms="$7"
+  local main_booking_ms="${8:-$per_run_ms}" estimated_iter_s="${9:-0}" \
+        static_wait_ms="${10:-0}" runner_overhead_s="${11:-0}" measured_iter_s="${12:-0}"
   jq -n \
     --argjson n "$iter_num" --arg slot "$slot" \
     --arg plan "$plan_path" --argjson s "$iter_start_epoch" \
     --argjson e "$iter_end_epoch" --argjson pr "$per_run_ms" \
-    '{iter:$n,slot:$slot,plan_path:$plan,iter_start_epoch:$s,iter_end_epoch:$e,per_run_ms:$pr}' \
+    --argjson mb "$main_booking_ms" --argjson est "$estimated_iter_s" \
+    --argjson sw "$static_wait_ms" --argjson ro "$runner_overhead_s" \
+    --argjson meas "$measured_iter_s" \
+    '{iter:$n,slot:$slot,plan_path:$plan,iter_start_epoch:$s,iter_end_epoch:$e,per_run_ms:$pr,main_booking_ms:$mb}
+     + (if $est > 0 then {estimated_iter_s:$est} else {} end)
+     + (if $sw > 0 then {static_wait_ms:$sw} else {} end)
+     + (if $ro > 0 then {runner_overhead_s:$ro} else {} end)
+     + (if $meas > 0 then {measured_iter_s:$meas} else {} end)' \
     > "${iter_dir}/iter_meta.json.tmp.$$"
   mv "${iter_dir}/iter_meta.json.tmp.$$" "${iter_dir}/iter_meta.json"
 }

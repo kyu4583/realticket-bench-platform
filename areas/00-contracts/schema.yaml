@@ -10,8 +10,9 @@
 #   1.  manifest_id      string  ✓  매니페스트 식별자 (run_id slug 1차 입력)
 #   2.  run_id_prefix    string  ✓  run_id 생성 시 prefix
 #   3.  iterations       int     ◐  반복 회차 N. duration 과 상호 배타 (XOR)
-#   4.  duration         dur     ◐  총 실행 시간. N = floor((duration-warmup)/(derived_per_run_s+cooldown))
-#                                  derived_per_run_s 는 Plan.json 의 simulation_duration_ms × 1.1 (ceil) — 02-orchestration 이 도출
+#   4.  duration         dur     ◐  총 실행 시간. duration mode 는 wall-clock deadline 기반.
+#                                  초기 N = floor((duration-warmup)/(estimated_iter_s+cooldown));
+#                                  estimated_iter_s 는 main_booking_ms + Gatling static waits + runner overhead 로 시작 후 실측 rolling average 갱신
 #   5.  warmup           dur     ✓  슬롯 ready 대기 시간
 #   6.  cooldown         dur     ✓  iteration 종료 후 다음 시작까지
 #   7.  max_failures     int     ✓  누적 실패 ≥ → run 중단 (FAILED 마커)
@@ -26,8 +27,8 @@
 #  15.  hypotheses       obj[]   ✗  가설 절 (선택). 미존재 시 SUMMARY.md 가설 섹션 미생성
 #
 # per_run 필드 폐기 (rev 2): 사용자 입력 X. PlanGenerator 가 자연 종료 (request_delay_mean / num_users / seats_per_user 결정)
-# → Plan.json 의 stats.simulation_duration_ms 기록 → 02-orchestration 이 ceil(× 1.1) → iter_meta.per_run_ms 저장.
-# 본예매(main_booking) region 의 길이도 동일 값. 03-analysis 는 iter_meta 에서 읽음.
+# → Plan.json 의 stats.simulation_duration_ms 기록 → 02-orchestration 이 ceil(× 1.1) → iter_meta.per_run_ms/main_booking_ms 저장.
+# 본예매(main_booking) region 길이와 duration mode wall-clock 1회 추정은 분리한다.
 #
 # Optional objects:
 #   +.  bench_stack           obj  ✗  4 기능 토글. 미존재 시 모두 false — base.yml 단독 deploy

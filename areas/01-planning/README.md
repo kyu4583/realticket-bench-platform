@@ -15,7 +15,7 @@
 | (2) | **baseline·candidate 슬롯 정의** | `slots[].name` + `targetUrl` + `image_tag`. 슬롯 ≤ 2 (Lock #3). **슬롯 2개면 β=true 강제 + targetUrl baseline=8080·candidate=8081 자동 분리** (§ AI 자동 derive 참조 — 두 슬롯 동일 포트 금지). `scenario_mode` 는 기본 4종/커스텀 여부와 무관하게 사용자 확인 없이 기록 금지 — 아래 § scenario_mode 확정 게이트 참조 | `slots[]` |
 | (3) | **docker-stack 4 기능 토글** | α(테스트 계정 사전 로그인 yes/no) · **β(nest 슬롯 개수 — (2) 슬롯 정의에서 양방향 자동 derive: 슬롯 2개면 β=true 강제, 1개면 β=false 강제 — 사용자에게 따로 묻지 않음)** · γ(Sentinel·autoscaling) · δ(autoscaler). 사용자가 명시 안 한 차원(α/γ/δ)은 disabled. **α=true 활성 시 [04-gatling § bench_stack ↔ Gatling 연동 규칙](../04-gatling-integration/README.md) 강제 — `TEST_ACCOUNT_ALREADY_STORED` 활성화 + 커스텀 시나리오 login 생략을 Gatling 구현 계획에 기록** | `bench_stack` |
 | (4) | **region 구성 + 단계 간 대기** | 시나리오 단계 흐름 (예: "권한 확인 → 구독 → 본예매") + 단계 사이 대기 시간을 자연어로 수집 → [04-gatling § region ↔ Gatling Config 대기 설정 매핑](../04-gatling-integration/README.md)으로 변환하여 `Config.java` 변경 계획에 기록 | (Config 측 — schema 직접 매핑 X) |
-| (5) | **실행 모드 + 타이밍** | `iterations` (정수) XOR `duration` (`6h`·`10m`) 선택 + `warmup` + `cooldown` 입력. **`per_run` 은 묻지 않음** — Plan.json 자연 종료 후 02-orchestration 이 `ceil(simulation_duration_ms × 1.1)` 도출 ([00-contracts § per_run 도출 규칙](../00-contracts/README.md)) | `iterations`\|`duration`, `warmup`, `cooldown` |
+| (5) | **실행 모드 + 타이밍** | `iterations` (정수) XOR `duration` (`6h`·`10m`) 선택 + `warmup` + `cooldown` 입력. **`per_run` 은 묻지 않음** — Plan.json 자연 종료 후 02-orchestration 이 분석용 `main_booking_ms` 를 도출하고, duration mode 는 Gatling static wait + runner overhead + 실측 rolling average 로 wall-clock 1회 시간을 추정 ([00-contracts § per_run / wall-clock timing 규칙](../00-contracts/README.md)) | `iterations`\|`duration`, `warmup`, `cooldown` |
 | (6) | **`event_ids`** | reset 호출할 RealTicket 이벤트 ID 배열 | `event_ids` |
 | (7) | **PlanConfig 확정 게이트** | PlanGenerator 실행 전에 필요한 `PlanConfig.json` 값을 확정한다. 이전 답변에서 derive 가능한 값은 제안·근거를 밝히고, 부하 강도·좌석 수·section 이동 등 derive 불가능한 값은 반드시 사용자에게 묻는다. 확정 결과는 `context.plan_config` 에 기록하고, 구현 세션 작업으로 `implementation_plan.gatling.change_plan` 에 `PlanConfig.json` 생성/수정 + PlanGenerator 실행을 포함한다. 상세 기준은 아래 § PlanConfig 확정 게이트와 [04-gatling § PlanConfig.json / Plan.json 핵심 필드](../04-gatling-integration/README.md) 참조 | (Gatling 측 — schema 직접 매핑 X) |
 | (8) | **`queries` 측정 지표** | Prometheus PromQL 목록 + `name` + `unit`. **응답 레이턴시는 Prometheus query 후보에 넣지 않고 Gatling `simulation.log` → `stats.json` 경로로 집계**. **두 계층으로 구성**: (A) NestJS `/metrics` — `http_request_rate`·`http_error_rate`·`event_loop_lag`·`gc_duration`, job 필터 `job=~"nest-.*"`, counter rate 윈도우 `[2s]`. (B) cAdvisor — `node_cpu`(`container_cpu_usage_seconds_total`, rate 윈도우 `[4s]`)·`node_memory`(`container_memory_rss`), 필터 `job="cadvisor",name=~"realticket_nest.*"`. cAdvisor는 고부하 시에도 컨테이너 외부에서 수집하므로 scrape 신뢰도가 높음 | `queries[]` |
@@ -41,7 +41,7 @@
 
 ## PlanConfig 확정 게이트
 
-`PlanConfig.json` 은 PlanGenerator 입력이며, `Plan.json.stats.simulation_duration_ms` 를 결정한다. 이 값이 곧 `per_run_ms` 와 `main_booking` region 길이로 이어지므로, PlanGenerator 실행 전에 설정 출처를 확정해야 한다.
+`PlanConfig.json` 은 PlanGenerator 입력이며, `Plan.json.stats.simulation_duration_ms` 를 결정한다. 이 값은 `per_run_ms`/`main_booking_ms` 와 `main_booking` region 길이로 이어진다. duration mode 의 실제 1회 시간은 여기에 Gatling Config static wait 와 runner overhead 를 더한 뒤 실행 중 실측으로 보정되므로, PlanGenerator 설정과 Config 대기 설정 출처를 모두 확정해야 한다.
 
 ### 사용자에게 반드시 확인할 값
 
@@ -94,7 +94,7 @@ PlanConfig 게이트가 미확정이면 PlanGenerator 실행 계획을 `done: tr
 | `slots[].targetUrl` | **1-슬롯**: `http://192.168.138.2:8080`. **2-슬롯** (β 자동 forced=true): baseline=`http://192.168.138.2:8080` · candidate=`http://192.168.138.2:8081` — **두 슬롯 동일 포트 사용 금지** (β=true 의 nest-candidate 서비스가 8081 에 뜨므로) |
 | `slots[].image_tag` | `nest:<manifest_id>-<slot_name>` 관례 — manifest_id 가 (1a) 에서 먼저 확정되어야 derive 가능 |
 
-`per_run` 은 자동 derive 가 아니라 **02-orchestration 이 Plan.json 생성 후 도출** — iter_meta.json 에만 기록 (매니페스트 yaml 에는 부재).
+`per_run` 은 자동 derive 가 아니라 **02-orchestration 이 Plan.json 생성 후 분석용 `main_booking_ms` 로 도출** — iter_meta.json 에만 기록 (매니페스트 yaml 에는 부재). duration mode 의 wall-clock 1회 추정값은 run.sh 가 Config static wait + runner overhead + 실측 rolling average 로 관리한다.
 
 ---
 

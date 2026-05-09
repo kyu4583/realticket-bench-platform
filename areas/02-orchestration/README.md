@@ -128,9 +128,9 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 |------|------|
 | 단계명 + 순서 | 매니페스트 수집 (4)단계 — [01-planning § 매니페스트 수집 흐름](../01-planning/README.md) |
 | 단계 간 대기 ms | Gatling Config.java 스냅샷 (`ENABLE_WAITING_*` + `WAITING_*_MILLIS`) — [04-gatling § region ↔ Config 매핑](../04-gatling-integration/README.md) |
-| 단계별 활동 시간 추정 | auth/subscribe = AI 추정 (1~5s). **본예매 = `ceil(Plan.json.stats.simulation_duration_ms × 1.1)`** — derived per_run. |
+| 단계별 활동 시간 추정 | auth/subscribe = AI 추정 (1~5s). **본예매 분석 region = `ceil(Plan.json.stats.simulation_duration_ms × 1.1)`**. duration mode 의 1회 시간은 이 값에 Gatling Config static wait 와 runner overhead 를 더한 wall-clock 추정값을 사용. |
 
-> **per_run 도출:** PlanGenerator 가 자연 종료로 결정한 `simulation_duration_ms` 에 1.1 안전 계수 적용. 매니페스트의 `per_run` 필드는 폐기됨. 도출된 값은 (a) iter_meta.json `per_run_ms` (b) phases.json `main_booking.end_ms` 두 곳에 기록 — 03-analysis 가 둘 다 소비.
+> **per_run / wall-clock 도출:** PlanGenerator 가 자연 종료로 결정한 `simulation_duration_ms` 에 1.1 안전 계수를 적용한 값은 분석용 `per_run_ms`/`main_booking_ms` 로 유지한다. duration mode 의 반복 제어는 `estimated_iter_s = ceil((main_booking_ms + static_wait_ms)/1000) + BENCH_RUNNER_OVERHEAD_S(default 20)` 로 시작하고, 각 iteration 의 `measured_iter_s` rolling average 로 갱신한다. 다음 iteration 은 deadline 안에 `estimated_iter_s + cooldown` 이 들어올 때만 시작한다.
 
 | 출력 | 위치 |
 |------|------|

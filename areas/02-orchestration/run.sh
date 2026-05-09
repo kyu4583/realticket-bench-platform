@@ -143,27 +143,54 @@ main() {
 
   # per_run 도출: Plan.json 의 stats.simulation_duration_ms × 1.1 (ceil)
   # PlanGenerator 가 자연 종료로 simulation_duration_ms 를 결정 — 매니페스트는 per_run 입력 X
-  local plan_full_path plan_max_ms per_run_ms per_run_s
+  local plan_full_path config_file plan_max_ms per_run_ms main_booking_ms main_booking_s
+  local static_wait_ms runner_overhead_s estimated_iter_s min_iter_estimate_s
   plan_full_path="$GATLING_DIR/$plan_path"
   [[ -f "$plan_full_path" ]] || die "Plan.json not found: $plan_full_path (PlanGenerator 실행 누락 의심)"
   plan_max_ms=$(jq -r '.stats.simulation_duration_ms // 0' "$plan_full_path")
   [[ "$plan_max_ms" -gt 0 ]] || die "Plan.json stats.simulation_duration_ms 가 0 — Plan 미생성 의심"
   # ceil(plan_max_ms × 1.1) ms → ceil(_ms / 1000) s
   per_run_ms=$(( (plan_max_ms * 11 + 9) / 10 ))
-  per_run_s=$(( (per_run_ms + 999) / 1000 ))
-  log INFO "main: per_run derived — plan_max_ms=$plan_max_ms → per_run_ms=$per_run_ms (per_run_s=$per_run_s)"
+  main_booking_ms="$per_run_ms"
+  main_booking_s=$(ceil_div "$main_booking_ms" 1000)
+  config_file="$GATLING_DIR/app/src/gatling/java/simulations/config/Config.java"
+  static_wait_ms=$(derive_gatling_static_wait_ms "$config_file")
+  runner_overhead_s="${BENCH_RUNNER_OVERHEAD_S:-20}"
+  [[ "$runner_overhead_s" =~ ^[0-9]+$ ]] || die "BENCH_RUNNER_OVERHEAD_S must be a non-negative integer"
+  estimated_iter_s=$(derive_initial_iter_wall_s "$main_booking_ms" "$static_wait_ms" "$runner_overhead_s")
+  min_iter_estimate_s=$(derive_initial_iter_wall_s "$main_booking_ms" "$static_wait_ms" 0)
+  log INFO "main: timing estimate -- plan_max_ms=$plan_max_ms main_booking_ms=$main_booking_ms static_wait_ms=$static_wait_ms runner_overhead_s=$runner_overhead_s estimated_iter_s=$estimated_iter_s"
+  log INFO "main: analysis region derived -- plan_max_ms=$plan_max_ms main_booking_ms=$main_booking_ms (main_booking_s=$main_booking_s)"
 
-  total_iter=$(manifest_yq 'iterations' "$manifest")
-  if [[ "$total_iter" == "null" || -z "$total_iter" ]]; then
-    local dur_s
-    dur_s=$(parse_duration "$(manifest_yq 'duration' "$manifest")")
-    # per_run + cooldown 분모 0 방지 + total_iter > 0 검증
-    local denom=$(( per_run_s + cooldown_s ))
-    [[ "$denom" -gt 0 ]] || die "derived per_run + cooldown must be > 0s in duration mode"
-    total_iter=$(( (dur_s - warmup_s) / denom ))
-    [[ "$total_iter" -gt 0 ]] || die "computed total_iter=$total_iter is 0 (check duration/derived per_run/cooldown)"
+  local manifest_iterations manifest_duration duration_mode dur_s duration_budget_s duration_deadline_epoch
+  manifest_iterations=$(manifest_yq 'iterations' "$manifest")
+  manifest_duration=$(manifest_yq 'duration' "$manifest")
+  duration_mode=0
+  dur_s=0
+  duration_budget_s=0
+  duration_deadline_epoch=0
+
+  if [[ "$manifest_iterations" != "null" && -n "$manifest_iterations" && "$manifest_duration" != "null" && -n "$manifest_duration" ]]; then
+    die "iterations and duration are mutually exclusive"
   fi
-
+  if [[ "$manifest_iterations" == "null" || -z "$manifest_iterations" ]] && [[ "$manifest_duration" == "null" || -z "$manifest_duration" ]]; then
+    die "iterations or duration required"
+  fi
+  if [[ "$manifest_iterations" == "null" || -z "$manifest_iterations" ]]; then
+    duration_mode=1
+    dur_s=$(parse_duration "$manifest_duration")
+    duration_budget_s=$(( dur_s - warmup_s ))
+    [[ "$duration_budget_s" -gt 0 ]] || die "duration must be greater than warmup"
+    local denom=$(( estimated_iter_s + cooldown_s ))
+    [[ "$denom" -gt 0 ]] || die "estimated iter + cooldown must be > 0s in duration mode"
+    total_iter=$(( duration_budget_s / denom ))
+    [[ "$total_iter" -gt 0 ]] || die "computed total_iter=$total_iter is 0 (check duration/estimated iter/cooldown)"
+    log INFO "main: duration mode -- duration_s=$dur_s warmup_s=$warmup_s cooldown_s=$cooldown_s initial_total_iter_estimate=$total_iter"
+  else
+    [[ "$manifest_iterations" =~ ^[0-9]+$ && "$manifest_iterations" -gt 0 ]] || die "iterations must be a positive integer"
+    total_iter="$manifest_iterations"
+    log INFO "main: iterations mode -- total_iter=$total_iter estimated_iter_s=$estimated_iter_s cooldown_s=$cooldown_s"
+  fi
   # ADMIN SID
   local sid
   sid=$(admin_login "${SLOT_TARGETS[0]}" "${ADMIN_ID:-}" "${ADMIN_PASSWORD:-}")
@@ -175,20 +202,43 @@ main() {
   local run_start_ts failed_iters last_failed_iter
   local -A slot_failed_before
   run_start_ts=$(date +%s)
+  if (( duration_mode == 1 )); then
+    duration_deadline_epoch=$(( run_start_ts + duration_budget_s ))
+  fi
   failed_iters=0
   last_failed_iter=-1
+  local executed_iters measured_iter_count measured_iter_total_s
+  executed_iters=0
+  measured_iter_count=0
+  measured_iter_total_s=0
 
   # iter 루프 (current_iter / current_slot 은 cleanup 이 참조 — global 유지)
-  for current_iter in $(seq 1 "$total_iter"); do
+  current_iter=1
+  while :; do
+    if (( duration_mode == 1 )); then
+      local now_s remaining_s needed_next_s
+      now_s=$(date +%s)
+      remaining_s=$(( duration_deadline_epoch - now_s ))
+      needed_next_s=$(( estimated_iter_s + cooldown_s ))
+      if (( remaining_s < needed_next_s )); then
+        log INFO "main: duration deadline reached -- executed_iters=$executed_iters remaining_s=$remaining_s needed_next_s=$needed_next_s estimated_iter_s=$estimated_iter_s cooldown_s=$cooldown_s"
+        break
+      fi
+      total_iter=$(( executed_iters + remaining_s / needed_next_s ))
+      (( total_iter < current_iter )) && total_iter="$current_iter"
+    else
+      (( current_iter <= total_iter )) || break
+    fi
     local slot_idx
     slot_idx=$(get_slot_for_iter "$current_iter" "$slot_count")
     current_slot="${SLOT_NAMES[$slot_idx]:-slot-$slot_idx}"
     local iter_dir="$run_dir/iter-${current_iter}-${current_slot}"
     mkdir -p "$iter_dir"
 
-    local iter_start
+    local iter_start iter_estimate_s
+    iter_estimate_s="$estimated_iter_s"
     iter_start=$(date +%s)
-    write_progress "$run_dir" "$current_iter" "$total_iter" "run" "$current_slot" "$failed_iters" "$run_start_ts" "$per_run_s" "$cooldown_s"
+    write_progress "$run_dir" "$current_iter" "$total_iter" "run" "$current_slot" "$failed_iters" "$run_start_ts" "$iter_estimate_s" "$cooldown_s"
 
     # event_ids (스페이스 분리 list)
     local event_ids
@@ -216,9 +266,11 @@ main() {
       fi
       last_failed_iter=$current_iter
       slot_failed_before[$slot_idx]=1
+      executed_iters=$current_iter
       log WARN "main: iter=$current_iter reset failed (event=${RESET_FAILED_EVENT:-?} http=${RESET_FAILED_HTTP:-?}) — skip run_gatling/prom, continuing"
-      write_progress "$run_dir" "$current_iter" "$total_iter" "cooldown" "$current_slot" "$failed_iters" "$run_start_ts" "$per_run_s" "$cooldown_s"
+      write_progress "$run_dir" "$current_iter" "$total_iter" "cooldown" "$current_slot" "$failed_iters" "$run_start_ts" "$estimated_iter_s" "$cooldown_s"
       sleep "$cooldown_s"
+      current_iter=$((current_iter + 1))
       continue
     fi
     run_gatling "$slot_idx" "$plan_path" "$iter_dir" || failed_iters=$((failed_iters + 1))
@@ -232,10 +284,24 @@ main() {
     else
       log WARN "parse_simulation_log.py not found — skipping"
     fi
-    write_iter_meta "$iter_dir" "$current_iter" "$current_slot" "$plan_path" "$iter_start" "$iter_end" "$per_run_ms"
+    local iter_wall_end measured_iter_s
+    iter_wall_end=$(date +%s)
+    measured_iter_s=$(( iter_wall_end - iter_start ))
+    write_iter_meta "$iter_dir" "$current_iter" "$current_slot" "$plan_path" "$iter_start" "$iter_end" "$per_run_ms" \
+      "$main_booking_ms" "$iter_estimate_s" "$static_wait_ms" "$runner_overhead_s" "$measured_iter_s"
 
-    write_progress "$run_dir" "$current_iter" "$total_iter" "cooldown" "$current_slot" "$failed_iters" "$run_start_ts" "$per_run_s" "$cooldown_s"
+    executed_iters=$current_iter
+    measured_iter_count=$((measured_iter_count + 1))
+    measured_iter_total_s=$((measured_iter_total_s + measured_iter_s))
+    estimated_iter_s=$(( (measured_iter_total_s + measured_iter_count - 1) / measured_iter_count ))
+    if (( estimated_iter_s < min_iter_estimate_s )); then
+      estimated_iter_s="$min_iter_estimate_s"
+    fi
+    log INFO "main: iter timing update -- iter=$current_iter measured_iter_s=$measured_iter_s rolling_estimated_iter_s=$estimated_iter_s"
+
+    write_progress "$run_dir" "$current_iter" "$total_iter" "cooldown" "$current_slot" "$failed_iters" "$run_start_ts" "$estimated_iter_s" "$cooldown_s"
     sleep "$cooldown_s"
+    current_iter=$((current_iter + 1))
   done
 
   # summarize.py 호출 (non-blocking)
@@ -249,7 +315,7 @@ main() {
   rm -f "$run_dir/RUNNING"
   cat > "$run_dir/COMPLETED" <<EOF
 completed_at=$(date -u +%FT%TZ)
-total_iter_executed=$total_iter
+total_iter_executed=$executed_iters
 failed_iters=$failed_iters
 tools_used=curl,ssh,git,gradle,python,yq,jq
 EOF

@@ -24,7 +24,7 @@
 - **출력:** `iter-N-<slot>/prom_metrics.json` — 구조: `{query_name: {phase_name: {mean, max, count}}}`. `_iter_total` 윈도우는 항상 포함, phase별 윈도우는 `phases.json` 가 있을 때만
 - **단독 CLI:** `python areas/03-analysis/analyze/prom_query.py --manifest bench/manifests/<manifest>.yaml --iter bench/results/<manifest_id>/<run_id>/iter-1-baseline`
 - **책임 경계:** Prometheus HTTP API 호출만. iter 전체 윈도우 = `[iter_start_epoch, iter_end_epoch]` (실측 우선) 또는 `[iter_start, iter_start+per_run_ms/1000]` (도출 fallback). phase 윈도우 = `[start_ms, end_ms)` (start inclusive, end exclusive)
-- **per_run 도출:** 매니페스트 `per_run` 필드 폐기. orchestration 이 `ceil(Plan.json.stats.simulation_duration_ms × 1.1)` 도출 후 iter_meta 에 `per_run_ms` 기록.
+- **iter timing 메타:** orchestration 이 분석 region 용 `per_run_ms`/`main_booking_ms` 를 `iter_meta.json` 에 기록한다. `per_run_ms` 는 `iter_end_epoch` 가 없을 때만 iter window fallback 으로 쓰고, 정상 결과는 `iter_end_epoch` 실측을 우선한다. duration mode 의 wall-clock 값(`estimated_iter_s`, `measured_iter_s`)은 실행 제어와 추적용 메타이며 Prometheus phase slicing 에 직접 사용하지 않는다.
 - **phases.json 스키마**: [00-contracts/README.md § phases.json 스키마](../00-contracts/README.md) 참조
 
 ### `summarize.py`

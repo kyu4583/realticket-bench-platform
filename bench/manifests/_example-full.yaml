@@ -2,8 +2,9 @@
 #
 # 사용 의도: 15 core fields + optional objects(bench_stack·context·implementation_plan) 시연
 #            + slots[].scenario_mode override + slots[].source_branch + hypotheses 가설 절.
-# duration mode 사용 — N = floor((duration_s - warmup_s) / (derived_per_run_s + cooldown_s))
-# derived_per_run_s 는 Plan.json stats.simulation_duration_ms 기반으로 orchestration 이 도출.
+# duration mode 사용 — 초기 N = floor((duration_s - warmup_s) / (estimated_iter_s + cooldown_s)).
+# estimated_iter_s 는 Plan.json 기반 main_booking_ms + Gatling static waits + runner overhead 로 시작하고
+# 실제 iteration wall-clock measured_iter_s rolling average 로 갱신된다.
 #
 # scenario_mode override:
 #   - baseline=SECTION_B (B 안 — PATCH /booking/seat/section)

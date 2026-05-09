@@ -15,7 +15,7 @@
 | 1 | `manifest_id` | string | ✓ | 매니페스트 식별자 (run_id slug 1차 입력) |
 | 2 | `run_id_prefix` | string | ✓ | run_id 생성 시 prefix (보통 manifest_id와 동일) |
 | 3 | `iterations` | int | ◐ | 반복 회차 N. `duration`과 상호 배타 |
-| 4 | `duration` | ISO8601-like (`6h`·`10m`) | ◐ | 총 실행 시간. `iterations`와 상호 배타. N = floor((duration-warmup)/(`derived_per_run_s`+cooldown)) — `derived_per_run_s` 도출 규칙은 아래 § per_run 도출 |
+| 4 | `duration` | ISO8601-like (`6h`·`10m`) | ◐ | 총 실행 시간. `iterations`와 상호 배타. duration mode 는 wall-clock deadline 기반으로 다음 iteration 시작 여부를 판단한다. 초기 N 추정 = floor((duration-warmup)/(`estimated_iter_s`+cooldown)) |
 | 5 | `warmup` | duration | ✓ | 슬롯 ready 대기 시간 (per-run 시작 전) |
 | 6 | `cooldown` | duration | ✓ | iteration 종료 후 다음 시작까지 |
 | 7 | `max_failures` | int | ✓ | 누적 실패 iter ≥ 본 값이면 run 중단 (FAILED 마커) |
@@ -97,7 +97,7 @@ workflow_state:
 - 모든 실행 전 작업이 끝나면 `implementation_plan.status: completed`, `workflow_state.status: ready_to_run`, `next_action: "BENCH_PREFLIGHT_ONLY=1 ..."` 형태로 둔다.
 - `run.sh` 실행 이후의 iteration 진행률·Prometheus 수집·SUMMARY 생성 상태는 매니페스트에 쓰지 않는다. 이 구간의 단일 진실은 `bench/results/<manifest_id>/<run_id>/` 의 마커와 산출물이다.
 
-> **per_run 도출 규칙 (rev 2):** 매니페스트는 `per_run` 을 입력받지 않는다. PlanGenerator 가 `simulation_duration_ms` 입력 없이 `request_delay_mean`/`num_users`/`seats_per_user` 로 자연 종료 — Plan.json 의 `stats.simulation_duration_ms` 가 결정. 02-orchestration 이 `per_run_ms = ceil(simulation_duration_ms × 1.1)` 도출하여 iter_meta.json 에 기록 + phases.json 의 `main_booking` end_ms 로 사용. 본예매(main_booking) region 의 길이 = derived per_run.
+> **per_run / wall-clock timing 규칙 (rev 3):** 매니페스트는 `per_run` 을 입력받지 않는다. PlanGenerator 가 자연 종료하여 Plan.json 의 `stats.simulation_duration_ms` 를 결정하고, 02-orchestration 은 `per_run_ms = main_booking_ms = ceil(simulation_duration_ms × 1.1)` 를 분석 region 길이로 기록한다. duration mode 의 반복 횟수는 이 값만 쓰지 않고 `estimated_iter_s = ceil((main_booking_ms + Gatling Config static waits)/1000) + BENCH_RUNNER_OVERHEAD_S(default 20)` 로 초기 추정한 뒤, 각 iteration 의 실제 wall-clock `measured_iter_s` rolling average 로 갱신한다. 다음 iteration 은 `now + estimated_iter_s + cooldown <= duration deadline` 일 때만 시작한다.
 
 > **Lock #3** (alternating only): `slots[]` ≤ 2 + 두 슬롯 동시 부하 금지. iteration이 슬롯을 번갈아 선택.
 
@@ -174,6 +174,11 @@ iter 단위 메타. 02-orchestration 의 `write_iter_meta` 가 작성, 03-analys
 | `iter_start_epoch` | int | ✓ | iter 시작 시각 (epoch 초) — Gatling 시작 직전 |
 | `iter_end_epoch` | int | ◐ | iter 종료 시각 (epoch 초) — Gatling 종료 직후 측정. 정상 종료 시 필수 |
 | `per_run_ms` | int | ◐ | 본예매 region 의 길이 ms = `ceil(Plan.json.stats.simulation_duration_ms × 1.1)`. orchestration 이 도출 |
+| `main_booking_ms` | int | ◐ | `per_run_ms` 와 동일한 분석 region 명시값. duration 계산의 wall-clock 추정과 구분하기 위해 기록 |
+| `estimated_iter_s` | int | ◐ | 해당 iteration 시작 시점에 사용한 wall-clock 1회 예상 초 |
+| `measured_iter_s` | int | ◐ | reset → Gatling → Prometheus 수집/parse/meta 작성까지 실제 wall-clock 초 |
+| `static_wait_ms` | int | ◐ | Gatling Config.java 의 활성 static wait 합계 (`ENABLE_STAGGERED_LOGIN`, `ENABLE_WAITING_BEFORE_SUBS`, `ENABLE_WAITING_AFTER_SUBS`) |
+| `runner_overhead_s` | int | ◐ | 초기 추정에 더한 runner overhead 초. 기본 20, `BENCH_RUNNER_OVERHEAD_S` 로 override |
 | `reset_failed` / `reset_failed_event` / `reset_failed_http` | bool/string | ✗ | reset 재시도 모두 실패한 케이스 (정상 iter 에는 부재) |
 
 **prom_query iter 윈도우 결정 우선순위:** `iter_end_epoch` 실측 → `iter_start + per_run_ms/1000` 도출 → 둘 다 부재 시 error.
