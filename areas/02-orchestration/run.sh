@@ -289,6 +289,14 @@ main() {
     measured_iter_s=$(( iter_wall_end - iter_start ))
     write_iter_meta "$iter_dir" "$current_iter" "$current_slot" "$plan_path" "$iter_start" "$iter_end" "$per_run_ms" \
       "$main_booking_ms" "$iter_estimate_s" "$static_wait_ms" "$runner_overhead_s" "$measured_iter_s"
+    # prom_query.py: prom_*.json + iter_meta.json → prom_metrics.json (summarize.py가 읽는 파일)
+    if [[ -f "$REPO_ROOT/areas/03-analysis/analyze/prom_query.py" ]]; then
+      python3 "$REPO_ROOT/areas/03-analysis/analyze/prom_query.py" \
+        --iter "$iter_dir" --manifest "$manifest" \
+        || log WARN "prom_query.py failed for $iter_dir"
+    else
+      log WARN "prom_query.py not found — skipping"
+    fi
 
     executed_iters=$current_iter
     measured_iter_count=$((measured_iter_count + 1))

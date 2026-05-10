@@ -1,1 +1,1 @@
-{"http_request_rate": {"_iter_total": {"mean": 12.02, "max": 13.0, "count": 5}, "main_booking": {"mean": 12.5, "max": 13.0, "count": 3}}}
+{"http_request_rate": {"_iter_total": {"mean": 12.02, "max": 13.0, "count": 5}, "main_booking": {"mean": 12.5, "max": 13.0, "count": 3}}, "node_cpu": {"_iter_total": {"mean": 0.42, "max": 0.91, "count": 5}, "main_booking": {"mean": 0.55, "max": 0.97, "count": 3}}, "node_memory": {"_iter_total": {"mean": 134217728, "max": 150994944, "count": 5}, "main_booking": {"mean": 157286400, "max": 167772160, "count": 3}}}

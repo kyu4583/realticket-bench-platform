@@ -18,6 +18,184 @@ from typing import Any
 FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
 
 
+def _parse_wait_ms(s: str) -> int:
+    """Parse wait duration string to milliseconds. '50s'→50000, '1m'→60000, '2h'→7200000."""
+    s = s.strip()
+    if s.endswith("ms"):
+        return int(s[:-2])
+    if s.endswith("h"):
+        return int(s[:-1]) * 3_600_000
+    if s.endswith("m"):
+        return int(s[:-1]) * 60_000
+    if s.endswith("s"):
+        return int(s[:-1]) * 1_000
+    return int(s) * 1_000  # bare number → seconds
+
+
+_IDLE_THRESHOLD_RATIO = 0.15   # max의 15% 미만 = idle
+_WAIT_MATCH_MIN_RATIO = 0.70   # 감지된 idle 구간이 예상 wait의 70% 이상이어야 매칭
+
+
+def _parse_region_flow_structure(
+    region_flow: object,
+) -> tuple[list[list[str]], list[int]]:
+    """region_flow list → (groups, waits_ms).
+
+    groups: 연속 step 묶음 목록 (wait 없이 이어진 step들)
+    waits:  그룹 사이 wait 시간(ms) 목록
+    list 형식이 아니거나 파싱 불가 시 ([], []) 반환.
+    """
+    if not isinstance(region_flow, list):
+        return [], []
+    groups: list[list[str]] = []
+    waits: list[int] = []
+    current_steps: list[str] = []
+    for entry in region_flow:
+        if not isinstance(entry, dict):
+            continue
+        if "step" in entry:
+            current_steps.append(str(entry["step"]))
+        elif "wait" in entry:
+            try:
+                wait_ms = _parse_wait_ms(str(entry["wait"]))
+            except (ValueError, AttributeError):
+                continue
+            groups.append(current_steps)
+            current_steps = []
+            waits.append(wait_ms)
+    if current_steps:
+        groups.append(current_steps)
+    return groups, waits
+
+
+def _cpu_phase_boundaries(
+    cpu_path: Path,
+    groups: list[list[str]],
+    waits: list[int],
+    iter_start: int,
+    iter_end: int,
+    slot: str,
+) -> list[dict] | None:
+    """prom_node_cpu.json (cAdvisor)에서 phase 경계를 감지한다.
+
+    wait 구간에서 활성 컨테이너 CPU가 급락하는 패턴을 이용.
+    idle 구간을 찾아 region_flow의 wait와 매칭한다.
+
+    감지 실패(데이터 부족·매칭 불가) 시 None 반환 → 호출자가 휴리스틱으로 폴백.
+    """
+    if not groups or not waits or len(groups) != len(waits) + 1:
+        return None
+    try:
+        raw = cpu_path.read_text(encoding="utf-8").strip()
+        if raw == "-":
+            return None
+        prom = json.loads(raw)
+    except Exception:
+        return None
+
+    # 활성 슬롯 컨테이너만 집계 (name 레이블에 "nest-<slot>" 포함)
+    by_ts: dict[int, float] = {}
+    for series in prom.get("data", {}).get("result", []):
+        name_label = series.get("metric", {}).get("name", "") or ""
+        if f"nest-{slot}" not in name_label:
+            continue
+        for ts_str, val_str in series.get("values", []):
+            try:
+                ts = int(ts_str)
+                by_ts[ts] = by_ts.get(ts, 0.0) + float(val_str)
+            except (ValueError, TypeError):
+                pass
+
+    if len(by_ts) < 6:   # 포인트 너무 적으면 신뢰 불가
+        return None
+
+    pts = sorted(by_ts.items())
+    max_val = max(v for _, v in pts)
+    if max_val <= 0:
+        return None
+    threshold = max_val * _IDLE_THRESHOLD_RATIO
+
+    # idle 구간 추출: (start_epoch, end_epoch)
+    idle_windows: list[tuple[int, int]] = []
+    in_idle = pts[0][1] < threshold
+    win_start = pts[0][0]
+    prev_ts = pts[0][0]
+    for ts, v in pts[1:]:
+        now_idle = v < threshold
+        if now_idle != in_idle:
+            if in_idle:
+                idle_windows.append((win_start, prev_ts))
+            in_idle = now_idle
+            win_start = ts
+        prev_ts = ts
+    if in_idle:
+        idle_windows.append((win_start, prev_ts))
+
+    # idle 구간을 wait과 시간 순으로 매칭
+    boundaries: list[int] = []
+    search_from = 0
+    for wait_ms in waits:
+        min_dur_s = (wait_ms * _WAIT_MATCH_MIN_RATIO) / 1000
+        best_i, best_diff = None, float("inf")
+        for i in range(search_from, len(idle_windows)):
+            ws, we = idle_windows[i]
+            dur_s = we - ws
+            if dur_s >= min_dur_s:
+                diff = abs(dur_s - wait_ms / 1000)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_i = i
+        if best_i is None:
+            return None
+        search_from = best_i + 1
+        boundaries.append(idle_windows[best_i][1])  # idle 구간 오른쪽 끝 = phase 경계
+
+    phases: list[dict] = []
+    for i, group_steps in enumerate(groups):
+        s_epoch = iter_start if i == 0 else boundaries[i - 1]
+        e_epoch = iter_end   if i == len(groups) - 1 else boundaries[i]
+        phases.append({
+            "name": " + ".join(group_steps),
+            "start_ms": (s_epoch - iter_start) * 1000,
+            "end_ms":   (e_epoch - iter_start) * 1000,
+        })
+    return phases
+
+
+def _region_flow_to_phases(
+    region_flow: object,
+    per_run_ms: int,
+    iter_start: int,
+    iter_end: int,
+) -> list[dict]:
+    """region_flow → phases list (휴리스틱 폴백).
+
+    iter_end - per_run_ms 를 기준으로 역산해 wait 중간점을 phase 경계로 삼는다.
+    CPU 감지(_cpu_phase_boundaries)가 실패했을 때만 호출된다.
+    """
+    groups, waits = _parse_region_flow_structure(region_flow)
+    if not groups:
+        return []
+
+    cursor = iter_end - per_run_ms // 1000
+    boundaries: list[int] = []
+    for wait_ms in reversed(waits):
+        mid = cursor - wait_ms // 2000
+        boundaries.insert(0, mid)
+        cursor -= wait_ms // 1000
+
+    phases: list[dict] = []
+    for i, group_steps in enumerate(groups):
+        s_epoch = iter_start if i == 0 else boundaries[i - 1]
+        e_epoch = iter_end   if i == len(groups) - 1 else boundaries[i]
+        phases.append({
+            "name": " + ".join(group_steps),
+            "start_ms": (s_epoch - iter_start) * 1000,
+            "end_ms":   (e_epoch - iter_start) * 1000,
+        })
+    return phases
+
+
 def _load_phases(iter_dir: Path) -> list[dict]:
     """phases.json 을 run_dir(=iter_dir.parent) 또는 iter_dir 자체에서 로드.
 
@@ -125,18 +303,39 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
     else:
         phases = _load_phases(iter_dir_p)
 
+    # phases.json 없으면 region_flow → CPU 감지 우선, 폴백은 휴리스틱
+    if not phases:
+        region_flow = (manifest.get("context") or {}).get("region_flow") or []
+        if region_flow:
+            groups, waits = _parse_region_flow_structure(region_flow)
+            slot = iter_meta.get("slot", "")
+            phases = _cpu_phase_boundaries(
+                iter_dir_p / "prom_node_cpu.json",
+                groups, waits, iter_start, iter_end, slot,
+            )
+            if phases is None:
+                per_run_ms = iter_meta.get("per_run_ms") or 0
+                phases = _region_flow_to_phases(region_flow, per_run_ms, iter_start, iter_end)
+
     out: dict[str, Any] = {}
     for q in queries:
         q_name = q["name"]
         if offline_response is not None:
             resp = offline_response
         else:
-            prom_files = sorted(iter_dir_p.glob("prom_*.json"))
-            if not prom_files:
-                out[q_name] = {"_iter_total": {"error": "no prom_*.json", "mean": None, "max": None, "count": 0}}
+            prom_file = iter_dir_p / f"prom_{q_name}.json"
+            if not prom_file.exists():
+                out[q_name] = {"_iter_total": {"error": f"prom_{q_name}.json not found", "mean": None, "max": None, "count": 0}}
                 continue
-            with prom_files[-1].open("r", encoding="utf-8") as f:
-                resp = json.load(f)
+            raw = prom_file.read_text(encoding="utf-8").strip()
+            if raw == "-":
+                out[q_name] = {"_iter_total": {"error": "collect_prometheus recorded -", "mean": None, "max": None, "count": 0}}
+                continue
+            try:
+                resp = json.loads(raw)
+            except json.JSONDecodeError as e:
+                out[q_name] = {"_iter_total": {"error": f"JSON parse error: {e}", "mean": None, "max": None, "count": 0}}
+                continue
 
         per_phase: dict[str, Any] = {
             "_iter_total": _slice_window(resp, iter_start, iter_end, end_inclusive=True)

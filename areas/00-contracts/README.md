@@ -151,7 +151,7 @@ bench/results/<manifest_id>/<run_id>/               # ex: bench/results/dry-run-
 │   └── prom_metrics.json                        # prom_query.py 출력 (query × phase 슬라이스 — _iter_total + phase별)
 ├── iter-2-candidate/                            # alternating: 다음 iter는 다른 slot
 │   └── ... (동일 구조)
-└── SUMMARY.md                                   # summarize.py 출력 (slot × request_type 레이턴시 + slot × phase × Prometheus + 가설 판정)
+└── SUMMARY.md                                   # summarize.py 출력 (phase별 Gatling metrics + phase별 Prometheus metrics + 가설 판정)
 ```
 
 > **마커 단일 진실:** RUNNING은 시작 시 1번 작성, COMPLETED 또는 FAILED 둘 중 하나가 종료 시 대체. 두 마커 동시 존재 = bug.
@@ -251,7 +251,7 @@ RealTicket    :
 | **Plan (대문자)** | PlanGenerator.py 출력 시나리오 정의 JSON (simulation_duration_ms · requests · collision_groups) | 매니페스트와 다름 |
 | **fire-and-forget** | run.sh가 VM `nohup`으로 실행되어 ssh·conversation 종료 후에도 지속 (Lock #4) | foreground 실행과 반대 |
 | **alternating** | 두 슬롯을 번갈아 측정 (한 번에 한 슬롯). Lock #3 | concurrent와 반대 |
-| **가설 절 (hypotheses)** | 매니페스트 15번째 필드. summarize.py가 slot × request_type 표를 생성 후 PASS/FAIL 판정 | 미존재 시 가설 섹션 미생성 |
+| **가설 절 (hypotheses)** | 매니페스트 15번째 필드. summarize.py가 phase별 Gatling/Prometheus 표를 생성 후 PASS/FAIL 판정 | 미존재 시 가설 섹션 미생성 |
 | **implementation_plan** | 매니페스트 optional 절. 외부 repo 구현 계획 + 완료 상태. Gatling 리서치 요약과 파일별 변경 계획을 포함하며 `status: pending` 이면 벤치마크 실행 금지 | context 절과 다름 — context는 설계 기록, implementation_plan은 실행 전 task 목록 |
 | **workflow_state** | 매니페스트 optional 절. 실행 전 AI 작업의 현재 위치와 다음 행동을 기록하는 재개 포인터 | 결과 디렉토리 `progress.json` 과 다름 — workflow_state 는 벤치마크 시작 전 hand-off 용 |
 

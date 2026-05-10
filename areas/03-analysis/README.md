@@ -13,7 +13,7 @@
 ### `parse_simulation_log.py`
 
 - **입력:** `iter-N-<slot>/simulation.log` (Gatling 출력 raw 텍스트)
-- **출력 1:** `stats.json` — request_name별 count·OK/KO·p50/p99/p999 latency
+- **출력 1:** `stats.json` — request_name별 Gatling report 핵심 집계 (`total`·`cnt_per_sec`·`min`·`p50`·`p75`·`p95`·`p99`·`max`·`mean`·`std_dev`) + OK/KO 원천값
 - **출력 2:** `raw_requests.jsonl` — per-request 1줄 JSON (**0바이트 X 필수**)
 - **단독 CLI:** `python areas/03-analysis/analyze/parse_simulation_log.py bench/results/<manifest_id>/<run_id>/iter-1-baseline`
 - **책임 경계:** simulation.log REQUEST 라인 파싱만
@@ -31,8 +31,8 @@
 
 - **입력:** run 디렉토리 전체 — 각 iter의 `stats.json` + `prom_metrics.json` + 매니페스트 `hypotheses:` 절(존재 시)
 - **출력:** `bench/results/<manifest_id>/<run_id>/SUMMARY.md` — 3 섹션:
-  1. `slot × request_type 레이턴시` — `stats.json` 기반 (request_name 별 p50·p99·failure_rate median)
-  2. `slot × phase × Prometheus 메트릭` — `prom_metrics.json` 기반 (query별 mean median across iters)
+  1. `Gatling metrics by phase` — `stats.json` 기반 (request_name 별 Total·Cnt/s·Min·50th pct·75th pct·95th pct·99th pct·Max·Mean·Std Dev; OK·KO·%KO는 SUMMARY 표에서 제외). `stats.json`에는 phase 축이 없으므로 request_name으로 phase를 보수적으로 추정하고, 실패 시 `unmapped` 표로 분리
+  2. `Prometheus metrics by phase` — `prom_metrics.json` 기반 (query별 mean median across iters). phase마다 별도 표를 만들고 같은 phase 안에서 slot 행을 붙임
   3. `가설 판정` — manifest `hypotheses:` 존재 시 PASS/FAIL
 - **단독 CLI:** `python areas/03-analysis/analyze/summarize.py bench/results/<manifest_id>/<run_id>`
 - **책임 경계:** 집계·표 생성만. 새 메트릭 계산 X — 모든 숫자는 stats.json·prom CSV에서 읽어옴
@@ -43,7 +43,7 @@
 
 | 목적 | 방법 |
 |------|------|
-| 전체 결과 확인 | `bench/results/<manifest_id>/<run_id>/SUMMARY.md` — slot × request_type 레이턴시 + slot × phase × Prometheus + 가설 판정 |
+| 전체 결과 확인 | `bench/results/<manifest_id>/<run_id>/SUMMARY.md` — phase별 Gatling metrics + phase별 Prometheus metrics + 가설 판정 |
 | 세부 집계 (요청별) | `iter-N-<slot>/stats.json` (request_name 키) |
 | 세부 집계 (Prometheus phase 슬라이스) | `iter-N-<slot>/prom_metrics.json` |
 | 시뮬레이션 단계 정의 | `<run_dir>/phases.json` |
@@ -66,7 +66,7 @@
 
 ## 가설 판정 입력
 
-`summarize.py`는 매니페스트의 `hypotheses:` 절이 있을 때만 가설 판정 표를 만든다. `hypotheses:`가 없으면 slot × request_type 레이턴시 표만 출력하고 가설 섹션은 만들지 않는다.
+`summarize.py`는 매니페스트의 `hypotheses:` 절이 있을 때만 가설 판정 표를 만든다. `hypotheses:`가 없으면 phase별 Gatling/Prometheus metrics 표만 출력하고 가설 섹션은 만들지 않는다.
 
 ---
 
