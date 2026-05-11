@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """summarize.py — phase별 Gatling/Prometheus metrics 표 + 가설 판정.
 
-Source: areas/03-analysis/README.md § 3 모듈 spec
+Source: areas/03-analysis/README.md § 분석 모듈 스펙
 """
 from __future__ import annotations
 import argparse, ast, json, operator as _op, statistics, sys
@@ -22,6 +22,9 @@ GATLING_SUMMARY_COLUMNS: list[tuple[str, str, str]] = [
     ("mean", "Mean", "median"),
     ("std_dev", "Std Dev", "median"),
 ]
+
+AI_INTERPRETATION_START = "<!-- AI_INTERPRETATION:START -->"
+AI_INTERPRETATION_END = "<!-- AI_INTERPRETATION:END -->"
 
 
 def _median_or_none(values: list[float]) -> float | None:
@@ -62,6 +65,15 @@ def _format_gatling_value(metric_name: str, value: float) -> str:
     if metric_name == "cnt_per_sec":
         return f"{value:.2f}"
     return f"{value:.1f}"
+
+
+def _extract_ai_interpretation(summary_text: str) -> str:
+    start = summary_text.find(AI_INTERPRETATION_START)
+    end = summary_text.find(AI_INTERPRETATION_END)
+    if start == -1 or end == -1 or end < start:
+        return ""
+    end += len(AI_INTERPRETATION_END)
+    return summary_text[start:end].strip()
 
 
 _ALLOWED_BIN = {ast.Add: _op.add, ast.Sub: _op.sub, ast.Mult: _op.mul, ast.Div: _op.truediv}
@@ -381,8 +393,15 @@ def summarize_run(run_dir: str) -> str:
     while lines and lines[-1] == "":
         lines.pop()
 
-    out = "\n".join(lines) + "\n"
     out_path = run_p / "SUMMARY.md"
+    preserved_interpretation = ""
+    if out_path.exists():
+        preserved_interpretation = _extract_ai_interpretation(out_path.read_text(encoding="utf-8"))
+
+    out = "\n".join(lines)
+    if preserved_interpretation:
+        out = out.rstrip() + "\n\n" + preserved_interpretation
+    out += "\n"
     tmp = out_path.with_suffix(".md.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         f.write(out)

@@ -228,7 +228,7 @@ else
 fi
 
 # ===============================================================
-section "분석 모듈 검증 — raw_requests 출력 + 3 모듈 self-test"
+section "분석 모듈 검증 — raw_requests 출력 + 자동 모듈/post-run self-test"
 # ===============================================================
 if grep -q 'def parse_simulation_log_to_raw_requests' areas/03-analysis/analyze/parse_simulation_log.py; then
   pass "분석 모듈 — parse_simulation_log_to_raw_requests 함수 정의"
@@ -241,7 +241,7 @@ if [[ "$n" -ge 5 ]]; then
 else
   fail "분석 모듈 — raw_requests.jsonl 필드 누락 ($n/5)"
 fi
-# 3 모듈 --selftest exit 0 (PyYAML 가용 시 PASS, 미가용 시 fallback)
+# 자동 분석 모듈 --selftest exit 0 (PyYAML 가용 시 PASS, 미가용 시 fallback)
 for mod in parse_simulation_log prom_query summarize; do
   if python3 "areas/03-analysis/analyze/$mod.py" --selftest >/dev/null 2>&1; then
     pass "분석 모듈 — $mod.py --selftest exit 0"
@@ -253,6 +253,11 @@ for mod in parse_simulation_log prom_query summarize; do
     fi
   fi
 done
+if python3 "areas/03-analysis/analyze/interpret_summary.py" --selftest >/dev/null 2>&1; then
+  pass "분석 모듈 — interpret_summary.py --selftest exit 0"
+else
+  fail "분석 모듈 — interpret_summary.py --selftest fail"
+fi
 
 # ===============================================================
 section "템플릿 시스템 검증 — base.yml + α/β/γ 마커 + 매핑 표"

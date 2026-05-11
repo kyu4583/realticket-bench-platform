@@ -28,11 +28,31 @@
 | 14 | `slots` | object[] | ✓ | 슬롯 정의. 최대 2 슬롯 (Lock #3). sub-fields: `name`(✓) `targetUrl`(✓) `image_tag`(✓) `scenario_mode`(◐ 슬롯별 override, 사용자 확인 시에만 기록) `source_branch`(◐ RealTicket 슬롯 브랜치 기점. 미지정 시 `origin/dev`. 02-orchestration 이 소비) |
 | 15 | `hypotheses` | object[] | ✗ | 가설 절. 미존재 시 `summarize.py`가 가설 섹션 미생성 |
 | + | `bench_stack` | object (`{alpha_test_account, beta_dual_slots, gamma_sentinel, delta_autoscaler}` — 모두 boolean, default `false`) | ✗ | optional. 4 기능 토글. 미존재 시 모두 disabled — base.yml 단독 deploy |
-| + | `context` | object | ✗ | optional. 실험 목적·비교 변수·설계 결정 기록. **파이프라인 미소비** — 새 세션 컨텍스트 복원용. 매니페스트 작성 세션에서 AI가 논의 내용을 채움 |
+| + | `context` | object | ✗ | optional. 실험 목적·비교 변수·설계 결정 기록. **run.sh 미소비**. 매니페스트 작성 세션에서 AI가 논의 내용을 채우며, 완료 후 사용자가 자연어로 요청하는 `SUMMARY.md` 목적 기반 해석의 1차 입력으로 사용 |
 | + | `implementation_plan` | object | ✗ | optional. 실행 전 외부 repo 구현 계획. `status: pending\|completed` + 영역별 계획. **run.sh preflight 소비** — `status: completed` 가 아니거나 `gatling.research_summary`/`gatling.change_plan` 이 비어 있으면 벤치마크 실행 금지 |
 | + | `workflow_state` | object | ✗ | optional. **실행 전 AI 작업 재개 상태**. 현재 작업 포인터·마지막 완료·다음 행동을 기록한다. `run.sh` 는 소비하지 않으며, 벤치마크 시작 후 진행 상태는 결과 디렉토리 마커와 `progress.json` 이 단일 진실 |
 
 > **`scenario_mode` provenance rule:** `slots[].scenario_mode` 는 Gatling 실행 계약값(`-PscenarioMode`)이므로 AI가 임의 derive하지 않는다. 값은 사용자가 명시 입력하거나, AI가 제안한 값을 사용자가 확인한 경우에만 YAML에 기록한다. 사용자가 확정하지 않으면 필드를 생략하고 `implementation_plan.gatling.scenario_decisions` 에 "scenario_mode 이름/구현 확정" pending 결정을 남긴다. 예시 파일의 커스텀 mode 이름이나 기존 기본 mode 이름을 사용자 확인 없이 실제 매니페스트 값으로 전용 금지.
+
+### `context` 해석 가이드 구조
+
+`context` 는 실행 파이프라인이 직접 소비하지 않는 자연어 기록이지만, 벤치 완료 후 AI가 `SUMMARY.md` 에 목적 기반 해석을 추가할 때 우선 읽는 계약이다. 새 매니페스트는 가능한 한 아래 필드를 포함한다.
+
+```yaml
+context:
+  purpose: "<이 벤치마크가 확인하려는 운영/성능 목적>"
+  comparison_axis: "<baseline 과 candidate 의 단일 비교축>"
+  decision_question: "<결과를 보고 답해야 하는 의사결정 질문>"
+  interpretation_focus:
+    - "<중점 해석 지표 또는 phase>"
+  controls:
+    - "<공정 비교를 위해 같아야 하는 조건>"
+```
+
+- `purpose`, `comparison_axis`, `decision_question` 은 매니페스트 작성 단계의 자연어 답변을 AI가 요약해 채운다.
+- `interpretation_focus` 는 `queries[]`, `hypotheses[]`, `region_flow`, slot 설명과 연결되어야 한다.
+- `controls` 는 baseline/candidate 대칭성, PlanConfig 동일성, 리소스 lock 같은 해석 전제 조건을 기록한다.
+- 이 블록은 실행 중 진행 상태를 기록하지 않는다. 런타임 진실은 계속 결과 디렉토리의 마커와 `progress.json` 이다.
 
 ### `implementation_plan.gatling` 리서치 구조
 
@@ -151,7 +171,7 @@ bench/results/<manifest_id>/<run_id>/               # ex: bench/results/dry-run-
 │   └── prom_metrics.json                        # prom_query.py 출력 (query × phase 슬라이스 — _iter_total + phase별)
 ├── iter-2-candidate/                            # alternating: 다음 iter는 다른 slot
 │   └── ... (동일 구조)
-└── SUMMARY.md                                   # summarize.py 출력 (phase별 Gatling metrics + phase별 Prometheus metrics + 가설 판정)
+└── SUMMARY.md                                   # summarize.py 출력 + 선택적 post-run AI 해석 관리 섹션
 ```
 
 > **마커 단일 진실:** RUNNING은 시작 시 1번 작성, COMPLETED 또는 FAILED 둘 중 하나가 종료 시 대체. 두 마커 동시 존재 = bug.
@@ -159,6 +179,8 @@ bench/results/<manifest_id>/<run_id>/               # ex: bench/results/dry-run-
 > **progress.json 6 필드:** `current_iter`·`total_iter`·`phase`(warmup|run|cooldown|done)·`started_at`·`updated_at`·`eta`. fire-and-forget 모드에서 사용자가 진행 상태 확인 가능.
 >
 > **iter 디렉토리 명명:** `iter-<N>-<slot>` 패턴.
+>
+> **post-run AI 해석:** `run.sh` 는 AI 해석을 호출하지 않는다. 완료 후 사용자가 자연어로 요청하면 AI가 manifest `context` 와 `SUMMARY.md` 를 읽고 `interpret_summary.py` 로 `<!-- AI_INTERPRETATION:START -->`/`END` 관리 섹션을 추가 또는 교체한다.
 
 ---
 

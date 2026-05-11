@@ -36,6 +36,7 @@
 6. Prometheus 메트릭 수집
 7. 분석 모듈 실행 → `SUMMARY.md` 자동 생성
 8. 외부 repo main 복귀 + 브랜치 영구 보존
+9. 사용자가 완료 후 자연어로 요청하면 AI가 매니페스트 목적에 따른 `SUMMARY.md` 해석 섹션 추가/교체
 
 ## 시작하기
 
@@ -95,6 +96,23 @@ AI가 측정 목적·슬롯 구성·기능 토글·region 분할 등을 순서�
 
 일반 사용자가 `bash` 명령을 직접 실행할 필요는 없다.
 
+### 완료 후 SUMMARY 해석 보강
+
+벤치 실행은 fire-and-forget 방식이므로 `run.sh` 종료 시점에 AI 해석을 자동으로 붙이지 않는다. run 이 `COMPLETED` 된 뒤 사용자가 자연어로 요청하면 AI가 매니페스트 `context` 와 `SUMMARY.md` 를 읽고 목적 기반 해석을 추가한다.
+
+```text
+"sse-reconnect-vs-patch 최신 run SUMMARY에 목적 기준 해석 추가해줘"
+```
+
+내부 처리 순서:
+
+```bash
+python areas/03-analysis/analyze/interpret_summary.py bench/results/<manifest_id>/<run_id> --context
+python areas/03-analysis/analyze/interpret_summary.py bench/results/<manifest_id>/<run_id> --file interpretation.md
+```
+
+`interpret_summary.py` 는 LLM을 호출하지 않고 `SUMMARY.md` 의 `<!-- AI_INTERPRETATION:START -->` / `<!-- AI_INTERPRETATION:END -->` 관리 섹션만 추가 또는 교체한다. 해석 본문은 사용자 요청을 받은 AI가 작성하며, 마지막에는 고정 템플릿이 아닌 사용자 선호 문체의 `### 정리` 문단으로 비교 기준과 핵심 수치 결론을 짧게 남긴다.
+
 ### 개발자 검증 경로
 
 이미 작성된 매니페스트를 수동 검증할 때만 단일 진입점을 직접 실행한다.
@@ -112,7 +130,7 @@ bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 | 00 | [contracts](areas/00-contracts/README.md) | manifest schema 15 core fields + optional objects · 결과 디렉토리 구조 · 용어집 |
 | 01 | [planning](areas/01-planning/README.md) | 매니페스트 수집 흐름 · scenario 설계 · Gatling 리서치 기반 구현 계획 · 실행 전 재개 상태 |
 | 02 | [orchestration](areas/02-orchestration/README.md) | run.sh · 브랜치 라이프사이클 · fire-and-forget |
-| 03 | [analysis](areas/03-analysis/README.md) | 분석 모듈 · 결과 해석 |
+| 03 | [analysis](areas/03-analysis/README.md) | 분석 모듈 · post-run 결과 해석 보강 |
 | 04 | [gatling-integration](areas/04-gatling-integration/README.md) | Gatling repo 인터페이스 · 브랜치 격리 |
 | 05 | [realticket-integration](areas/05-realticket-integration/README.md) | RealTicket repo 인터페이스 · VM 빌드 |
 | 06 | [vm-environment](areas/06-vm-environment/README.md) | VM 고정 인프라 · 헬스체크 |

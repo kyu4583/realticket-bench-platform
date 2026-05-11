@@ -118,7 +118,13 @@ bench_stack:
 # context (object, optional) — 파이프라인 미소비
 # 실험 목적·비교 변수·설계 결정을 자연어로 기록. 매니페스트 작성 세션에서 AI가 채움.
 # context:
+#   purpose:          "<벤치마크 목적과 운영 판단 맥락>"
 #   comparison_axis: "<비교 변수 1줄 요약>"
+#   decision_question: "<post-run 해석이 답해야 하는 질문>"
+#   interpretation_focus:
+#     - "<우선 해석할 phase/request/query/risk>"
+#   controls:
+#     - "<결과 해석 전에 확인할 공정성 조건>"
 #   baseline_notes:  "<baseline 슬롯 설명>"
 #   candidate_notes: "<candidate 슬롯 설명>"
 #   region_flow:     "<시나리오 단계 흐름 자연어>"

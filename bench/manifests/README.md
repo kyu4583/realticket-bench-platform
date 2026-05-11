@@ -33,11 +33,15 @@ schema의 기계 가독 placeholder는 `areas/00-contracts/schema.yaml`에 둔�
 2. `manifest_id` 는 사용자에게 명시 입력으로 받고, 비교 변수와 별도 turn 으로 확정
 3. α/β/γ/δ 차원 질문 → bench-stack yml 변형 결정
 4. PlanGenerator 실행 전에 `PlanConfig.json` 설정값을 확정하고, 확정값·derive값·미확정값을 `context.plan_config` 에 기록
-5. `bench/manifests/<manifest_id>.yaml` 생성 (15 core fields + optional `bench_stack`·`context`·`implementation_plan`·`workflow_state`)
+5. `bench/manifests/<manifest_id>.yaml` 생성 (15 core fields + optional `bench_stack`·`context`·`implementation_plan`·`workflow_state`). `context` 에는 post-run 해석을 위해 `purpose`·`comparison_axis`·`decision_question`·`interpretation_focus`·`controls` 를 함께 기록
 6. 구현 세션마다 `workflow_state` 의 `current_task_ref`·`last_completed`·`next_action` 갱신
 7. `workflow_state.status: ready_to_run` 이 되면 `bash areas/02-orchestration/run.sh bench/manifests/<manifest_id>.yaml` 실행
 
 `workflow_state` 는 실행 전 재개 포인터다. `run.sh` 실행 이후의 진행률은 매니페스트가 아니라 `bench/results/<manifest_id>/<run_id>/progress.json` 과 마커 파일을 확인한다.
+
+## post-run SUMMARY 해석
+
+`run.sh` 는 AI 해석을 자동 호출하지 않는다. 벤치가 `COMPLETED` 된 뒤 사용자가 자연어로 요청하면 AI가 매니페스트 `context` 와 `SUMMARY.md` 를 읽고 `areas/03-analysis/analyze/interpret_summary.py` 로 `SUMMARY.md` 안의 관리 섹션을 추가 또는 교체한다.
 
 ## Out of Scope
 

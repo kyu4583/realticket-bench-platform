@@ -1,14 +1,14 @@
-# areas/03-analysis/analyze — 3 분석 모듈
+# areas/03-analysis/analyze — 분석 모듈과 post-run 보강 도구
 
 ## 책임 범위
 
-3 분석 모듈 (`parse_simulation_log` · `prom_query` · `summarize`) — iter 디렉토리 단위 호출. `raw_requests.jsonl` per-request 출력 포함 (회귀 방지). 3 .py + `requirements.txt` + self-test fixture를 포함한다.
+3 자동 분석 모듈 (`parse_simulation_log` · `prom_query` · `summarize`) + post-run 보강 도구 (`interpret_summary`) 를 둔다. 자동 모듈은 iter/run 디렉토리 단위로 호출되고, `interpret_summary` 는 완료 후 사용자 자연어 명령을 받은 AI가 `SUMMARY.md` 관리 섹션을 추가/교체할 때만 호출한다.
 
 ## 영역 spec 참조
 
-3 모듈의 함수 시그니처·입출력·CLI 단일 진실은 영역 문서에 lock — 본 README 는 *spec 재진술 X · link O*.
+자동 분석 모듈과 post-run 보강 도구의 함수 시그니처·입출력·CLI 단일 진실은 영역 문서에 lock — 본 README 는 *spec 재진술 X · link O*.
 
-- 3 모듈 spec: [`areas/03-analysis/README.md` § 3 모듈 spec](../README.md#3-모듈-스펙) — 각 모듈의 메인 함수 · 입력 · 출력 · CLI 인자 단일 진실
+- 분석 모듈 spec: [`areas/03-analysis/README.md` § 분석 모듈 스펙](../README.md#분석-모듈-스펙) — 각 모듈의 메인 함수 · 입력 · 출력 · CLI 인자 단일 진실
 - raw_requests.jsonl per-request 출력: [`areas/03-analysis/README.md` § raw_requests.jsonl 형식](../README.md#raw_requestsjsonl-형식)
 - 가설 판정 입력: [`areas/03-analysis/README.md` § 가설 판정 입력](../README.md#가설-판정-입력)
 
@@ -36,6 +36,7 @@ python3 -m venv bench/analyze/.venv && \
 python bench/analyze/parse_simulation_log.py --selftest
 python bench/analyze/prom_query.py --selftest
 python bench/analyze/summarize.py --selftest
+python bench/analyze/interpret_summary.py --selftest
 ```
 
 ## 디렉토리 구조
@@ -47,6 +48,7 @@ analyze/
 ├── parse_simulation_log.py       # parse_iter_stats + parse_simulation_log_to_raw_requests
 ├── prom_query.py                 # query_iter_metrics
 ├── summarize.py                  # summarize_run
+├── interpret_summary.py          # post-run SUMMARY.md AI interpretation section manager
 └── tests/
     ├── .gitkeep
     └── fixtures/                 # self-test 합성 입력 (고정 경로)

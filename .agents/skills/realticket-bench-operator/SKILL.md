@@ -41,7 +41,7 @@ When the user says "매니페스트 시작하자" or equivalent:
 4. Derive only fields that `areas/01-planning/README.md` explicitly permits. If a value is part of PlanConfig user-confirm-required fields, ask.
 5. Do not write `slots[].scenario_mode` unless the user explicitly confirms the value.
 6. After collection, research the Gatling repo read-only. If subagents are unavailable or not authorized, do the read-only research inline.
-7. Create `bench/manifests/<manifest_id>.yaml` with core fields plus `bench_stack`, `context`, `implementation_plan`, and `workflow_state`.
+7. Create `bench/manifests/<manifest_id>.yaml` with core fields plus `bench_stack`, `context`, `implementation_plan`, and `workflow_state`. In `context`, preserve post-run interpretation inputs: `purpose`, `comparison_axis`, `decision_question`, `interpretation_focus`, and `controls`.
 8. Leave `implementation_plan.status: pending` and point `workflow_state.current_task_ref` at the first unfinished implementation task.
 9. Do not implement external repo code during the manifest drafting session.
 
@@ -86,3 +86,14 @@ When reporting outcomes:
 - Cite exact local files when useful.
 - State whether preflight, run, analysis, or result inspection was actually performed.
 - If a command could not run because VM, network, SSH, or external repo access was unavailable, say that directly and leave the next command/action explicit.
+
+## Post-run Interpretation Workflow
+
+When the user asks to add, refresh, or write an interpretation after a benchmark run:
+
+1. Resolve the target `bench/results/<manifest_id>/<run_id>/` directory. Prefer the latest `COMPLETED` run if the user only names a manifest.
+2. Read `areas/00-contracts/README.md` result layout, `areas/03-analysis/README.md`, the target `SUMMARY.md`, and the manifest `context`.
+3. Use `python areas/03-analysis/analyze/interpret_summary.py <run_dir> --context` to confirm the resolved manifest context and whether an interpretation section already exists.
+4. Write a concise purpose-based Markdown interpretation from the manifest purpose, comparison axis, decision question, interpretation focus, hypotheses, and observed metrics.
+5. Include a final `### 정리` subsection inside the managed `Purpose-based Interpretation` section. This is not a fixed template: match the compact style, expression level, and numeric directness of the user's preferred summaries. State the comparison basis first, group the important latency/resource outcomes, use raw values plus percentage deltas, and avoid claims that the metrics do not support.
+6. Insert or replace the managed section with `interpret_summary.py`. Do not call this from `run.sh`; this is only a user-requested post-run enrichment step.

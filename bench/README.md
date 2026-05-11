@@ -45,7 +45,7 @@ cp areas/06-vm-environment/.env.example areas/06-vm-environment/.env
 
 ## Out of Scope
 
-- 영역별 spec 정의 (manifest schema · run.sh 함수 enumeration · 3 모듈 spec 등) → 7 영역 문서
+- 영역별 spec 정의 (manifest schema · run.sh 함수 enumeration · 분석 모듈 spec 등) → 7 영역 문서
 - run.sh 본체 → `areas/02-orchestration/run.sh`
 - lib 함수 → `areas/02-orchestration/lib/`
 - 분석 모듈 → `areas/03-analysis/analyze/`

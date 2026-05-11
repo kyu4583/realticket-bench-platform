@@ -92,7 +92,23 @@ hypotheses:
 # ─── 실험 컨텍스트 ─────────────────────────────────────────────────────────
 # 파이프라인 미소비. 새 세션 컨텍스트 복원 및 결과 해석용.
 context:
+  purpose: >
+    Compare whether section-scoped SSE reconnects can replace a persistent SSE
+    connection plus PATCH section switching without worsening booking stability,
+    latency, or container resource pressure.
   comparison_axis: "SSE 아키텍처 비교 — 단일 연결+PATCH(B안) vs section별 재연결(A안)"
+  decision_question: >
+    Is the candidate reconnect path operationally preferable to the baseline
+    PATCH path after accounting for section_move latency, error behavior, and
+    node_cpu/node_memory mean/max?
+  interpretation_focus:
+    - "section_move and main_booking request latency percentiles"
+    - "http_error_rate and Gatling KO during repeated section moves"
+    - "node_cpu mean/max and node_memory mean/max by slot"
+    - "whether any candidate difference is explained by an unequal request mix"
+  controls:
+    - "baseline and candidate must keep symmetric CPU, memory, deploy, and update settings"
+    - "Plan.json, user count, request delays, section count, and seed stay identical across slots"
   baseline:
     branch: "origin/dev"
     notes:  "SSE 1회 연결 유지. section 이동 시 PATCH /booking/seat/section 호출"

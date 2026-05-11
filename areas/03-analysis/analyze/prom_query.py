@@ -8,7 +8,7 @@ iter 윈도우는 iter_meta.json 의 iter_start_epoch + (iter_end_epoch | per_ru
 매니페스트의 per_run 필드는 더 이상 사용하지 않음 (per_run_ms 는 02-orchestration 이 Plan.json
 에서 derive 후 iter_meta 에 기록 — `ceil(plan_max_ms * 1.1)`).
 
-Source: areas/03-analysis/README.md § 3 모듈 spec
+Source: areas/03-analysis/README.md § 분석 모듈 스펙
 """
 from __future__ import annotations
 import argparse, json, sys

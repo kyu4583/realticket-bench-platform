@@ -4,7 +4,7 @@
 
 ### Codex 운영 entrypoint
 
-Codex에서 benchmark 운영 작업(매니페스트 시작·재개·preflight/run.sh 실행·결과 확인·외부 repo drift 확인)을 수행할 때는 `$realticket-bench-operator` skill을 먼저 사용한다.
+Codex에서 benchmark 운영 작업(매니페스트 시작·재개·preflight/run.sh 실행·결과 확인·SUMMARY 해석 보강·외부 repo drift 확인)을 수행할 때는 `$realticket-bench-operator` skill을 먼저 사용한다.
 
 - 등록 위치: `%USERPROFILE%\.codex\skills\realticket-bench-operator`
 - 배포 원본: `.agents/skills/realticket-bench-operator/`
@@ -23,7 +23,7 @@ skill이 아직 등록되지 않은 환경에서는 `README.md`의 등록 절차
 | 00 | `contracts` | `areas/00-contracts/README.md` | manifest schema · region/slot/iteration 모델 · run_id · 결과 디렉토리 구조 · 용어집 (단일 진실) |
 | 01 | `planning` | `areas/01-planning/README.md` | 매니페스트 작성 · scenario 설계 · 가설 절 |
 | 02 | `orchestration` | `areas/02-orchestration/README.md` | run.sh · fire-and-forget · 마커 · **이미지 swap·stack restart(VM 변동)** |
-| 03 | `analysis` | `areas/03-analysis/README.md` | parse · prom_query · summarize · cross product 표 |
+| 03 | `analysis` | `areas/03-analysis/README.md` | parse · prom_query · summarize · post-run SUMMARY 해석 보강 |
 | 04 | `gatling-integration` | `areas/04-gatling-integration/README.md` | gatling repo 계약+풀가이드. Tracking: gatling `main` 동적 확인 |
 | 05 | `realticket-integration` | `areas/05-realticket-integration/README.md` | RealTicket repo 계약+풀가이드. Tracking: realticket `dev` 동적 확인 + m2 dic hand-off slot |
 | 06 | `vm-environment` | `areas/06-vm-environment/README.md` | **고정 인프라만** (Swarm·Sentinel·Prom/Grafana·SSH/키). 변동은 02 책임 |
@@ -57,7 +57,7 @@ skill이 아직 등록되지 않은 환경에서는 `README.md`의 등록 절차
 
 본 플랫폼은 **AI가 단일 제어 평면**으로 벤치마크를 지휘한다. 사용자는 자연어 명령 한 번으로 전체 흐름이 완성된다.
 
-**매니페스트 시작 트리거:** 사용자가 "매니페스트 시작하자" 또는 동등 자연어 → **반드시 [areas/01-planning/README.md § 매니페스트 수집 흐름 10단계](areas/01-planning/README.md) + § PlanConfig 확정 게이트 + § AI 자동 derive 항목 + § 실행 전 재개 상태 운영** 을 먼저 읽고 그 순서대로 수집 → 자동 생성. schema 단일 진실은 [areas/00-contracts/README.md § Manifest Schema](areas/00-contracts/README.md) (15 core fields + optional bench_stack/context/implementation_plan/workflow_state).
+**매니페스트 시작 트리거:** 사용자가 "매니페스트 시작하자" 또는 동등 자연어 → **반드시 [areas/01-planning/README.md § 매니페스트 수집 흐름 10단계](areas/01-planning/README.md) + § PlanConfig 확정 게이트 + § 목적 기반 해석 준비 + § AI 자동 derive 항목 + § 실행 전 재개 상태 운영** 을 먼저 읽고 그 순서대로 수집 → 자동 생성. schema 단일 진실은 [areas/00-contracts/README.md § Manifest Schema](areas/00-contracts/README.md) (15 core fields + optional bench_stack/context/implementation_plan/workflow_state).
 
 **AI가 자동 수행하는 것 (사람 개입 0):**
 1. 매니페스트 YAML 생성 (`bench/manifests/<id>.yaml`)
@@ -72,6 +72,8 @@ skill이 아직 등록되지 않은 환경에서는 `README.md`의 등록 절차
 9. 매니페스트 종료 → 외부 repo main 복귀 + 브랜치 영구 보존
 
 **사용자가 하는 것:** 자연어 명령 + 결과 확인
+
+**벤치 완료 후 해석 보강:** `run.sh` 는 fire-and-forget 종료 시 AI 해석을 호출하지 않는다. 사용자가 완료 후 자연어로 요청하면 AI가 매니페스트 `context` 와 `SUMMARY.md` 를 읽고 `areas/03-analysis/analyze/interpret_summary.py` 로 `SUMMARY.md` 의 관리 섹션을 추가/교체한다.
 
 **영역별 작업 분담은 `areas/README.md` § AI 작업 지침 참조.**
 
@@ -97,7 +99,7 @@ skill이 아직 등록되지 않은 환경에서는 `README.md`의 등록 절차
 
 **realticket-bench-platform**
 
-Codex(Bash)가 단일 제어 평면으로 RealTicket(또는 동형 백엔드)의 부하 벤치마크를 *지휘*하는 독립 플랫폼이다. 사용자는 자연어 명령("매니페스트 X 6시간 돌려") 하나로 시뮬레이션 실행·세션 초기화·메트릭 수집·결과 요약·가설 판정까지 끝낸다.
+Codex(Bash)가 단일 제어 평면으로 RealTicket(또는 동형 백엔드)의 부하 벤치마크를 *지휘*하는 독립 플랫폼이다. 사용자는 자연어 명령("매니페스트 X 6시간 돌려") 하나로 시뮬레이션 실행·세션 초기화·메트릭 수집·결과 요약·가설 판정까지 끝내고, 완료 후 별도 자연어 요청으로 목적 기반 해석을 `SUMMARY.md` 에 보강할 수 있다.
 
 본 repo는 **벤치마크 *지휘자* 역할의 신규 상위 레포**이며, 외부 도구(Gatling 시뮬레이션 프로젝트·VM 스택)는 본 repo가 *호출*만 한다 — 도구 코드 자체는 외부에 둔다.
 

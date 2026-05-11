@@ -57,6 +57,22 @@ bench_stack:
   delta_autoscaler:   false
 
 context:
+  purpose: >
+    Compare whether section-scoped SSE reconnects can replace the baseline
+    persistent SSE plus PATCH section switch path without increasing latency,
+    errors, or container resource pressure.
+  comparison_axis: "section switch implementation: persistent SSE + PATCH vs section-scoped SSE reconnect"
+  decision_question: >
+    Is the candidate SSE reconnect design preferable after checking repeated
+    section_move behavior, booking stability, and node_cpu/node_memory mean/max?
+  interpretation_focus:
+    - "section_move latency and KO/error behavior"
+    - "main_booking stability after repeated section moves"
+    - "node_cpu and node_memory mean/max symmetry between baseline and candidate"
+    - "whether slot differences are caused by implementation behavior rather than load/config drift"
+  controls:
+    - "baseline/candidate CPU, memory, deploy, and update behavior must remain symmetric"
+    - "Plan.json, num_users, section_move_count, request delays, and seed stay identical across slots"
   comparison_variable: >
     좌석 현황 SSE 구조 비교.
     baseline: SSE 1회 연결 유지, section 이동 PATCH 요청 이후 해당 section 좌석 현황 수신.

@@ -178,3 +178,4 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 - 마커 파일 외의 상태 파일 신규 추가 금지 (Lock #4)
 - `run.sh` 실행 중 진행률을 매니페스트 `workflow_state` 에 중복 기록 금지
 - fire-and-forget 흐름을 foreground로 변경 금지
+- `run.sh` 종료 시 AI 해석 호출 금지. `SUMMARY.md` 목적 기반 해석은 완료 후 사용자 자연어 요청을 받은 03-analysis post-run 단계에서만 추가

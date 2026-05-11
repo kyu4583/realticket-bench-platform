@@ -11,7 +11,7 @@
 | 단계 | 질문/입력 대상 | AI 행동 | schema 매핑 |
 |------|---------|---------|------------|
 | (1a) | **manifest_id (필수 입력)** | 사용자에게 매니페스트 식별자 (영문 kebab-case, 예: `sse-reconnect-vs-patch`)를 **별도 질문으로** 받는다. AI 추측 derive 금지 — 명시 입력 강제. image_tag·브랜치명 등이 이 값에서 derive 되므로 가장 먼저 확정 | `manifest_id` |
-| (1b) | **비교 변수 1개 (필수 입력)** | 이번 매니페스트가 측정할 단일 비교 차원 확인 (예: SSE 아키텍처 비교 · Sentinel 적용 유무 · 캐싱 적용 전후). (1a) 와 별도 질문으로 받음 — 한 답변으로 합치지 말 것 | (직접 매핑 X — 후속 단계의 컨텍스트) |
+| (1b) | **비교 변수 1개 (필수 입력)** | 이번 매니페스트가 측정할 단일 비교 차원 확인 (예: SSE 아키텍처 비교 · Sentinel 적용 유무 · 캐싱 적용 전후). (1a) 와 별도 질문으로 받음 — 한 답변으로 합치지 말 것. 답변은 나중에 `SUMMARY.md` 목적 기반 해석이 읽을 수 있도록 `context.purpose`·`context.comparison_axis`·`context.decision_question` 의 원천으로 보존 | `context` |
 | (2) | **baseline·candidate 슬롯 정의** | `slots[].name` + `targetUrl` + `image_tag`. 슬롯 ≤ 2 (Lock #3). **슬롯 2개면 β=true 강제 + targetUrl baseline=8080·candidate=8081 자동 분리** (§ AI 자동 derive 참조 — 두 슬롯 동일 포트 금지). `scenario_mode` 는 기본 4종/커스텀 여부와 무관하게 사용자 확인 없이 기록 금지 — 아래 § scenario_mode 확정 게이트 참조 | `slots[]` |
 | (3) | **docker-stack 4 기능 토글** | α(테스트 계정 사전 로그인 yes/no) · **β(nest 슬롯 개수 — (2) 슬롯 정의에서 양방향 자동 derive: 슬롯 2개면 β=true 강제, 1개면 β=false 강제 — 사용자에게 따로 묻지 않음)** · γ(Sentinel·autoscaling) · δ(autoscaler). 사용자가 명시 안 한 차원(α/γ/δ)은 disabled. **α=true 활성 시 [04-gatling § bench_stack ↔ Gatling 연동 규칙](../04-gatling-integration/README.md) 강제 — `TEST_ACCOUNT_ALREADY_STORED` 활성화 + 커스텀 시나리오 login 생략을 Gatling 구현 계획에 기록** | `bench_stack` |
 | (4) | **region 구성 + 단계 간 대기** | 시나리오 단계 흐름 (예: "권한 확인 → 구독 → 본예매") + 단계 사이 대기 시간을 자연어로 수집 → [04-gatling § region ↔ Gatling Config 대기 설정 매핑](../04-gatling-integration/README.md)으로 변환하여 `Config.java` 변경 계획에 기록 | (Config 측 — schema 직접 매핑 X) |
@@ -25,6 +25,8 @@
 > **schema 완전성 검증:** 위 10단계 + 아래 § AI 자동 derive 항목 합치면 [00-contracts § Manifest Schema](../00-contracts/README.md) 의 15 core fields + optional `bench_stack`·`context`·`implementation_plan` 모두 채워진다. 누락 의심 시 schema 표 cross-check 필수.
 >
 > **bundling 금지:** (1a) manifest_id 와 (1b) 비교 변수는 **별도 turn 으로 묻는다** — 한 질문에 합치면 사용자가 manifest_id 만 답하거나 비교 변수만 답해서 한쪽이 누락된다. 마찬가지로 다른 단계도 한 turn 1 질문 원칙.
+
+> **post-run 해석 준비:** 매니페스트 작성 단계에서 사용자의 자연어 목적을 `context` 에 구조화해 둔다. `run.sh` 는 이 값을 소비하지 않지만, 완료 후 사용자가 "결과 해석 추가해줘" 라고 요청하면 AI가 이 블록을 읽고 `SUMMARY.md` 에 해석 섹션을 추가한다.
 
 ---
 
@@ -76,6 +78,20 @@
 - 구현 작업: `implementation_plan.gatling.change_plan` 에 `PlanConfig.json` 생성/수정, `PlanGenerator.py --selftest`, `Plan.json stats.simulation_duration_ms > 0` 확인을 포함
 
 PlanConfig 게이트가 미확정이면 PlanGenerator 실행 계획을 `done: true` 로 표시하지 않는다.
+
+---
+
+## 목적 기반 해석 준비
+
+새 매니페스트의 `context` 는 벤치 완료 후 AI 해석을 위해 아래 자연어 필드를 가능한 한 채운다.
+
+- `purpose`: 이 벤치마크가 왜 필요한지, 어떤 운영 판단을 돕는지
+- `comparison_axis`: baseline 과 candidate 사이에서 의도적으로 달라지는 단일 축
+- `decision_question`: `SUMMARY.md` 수치를 보고 답해야 하는 질문
+- `interpretation_focus`: 해석 때 우선 볼 phase, request, Prometheus query, 실패율, 리소스 지표
+- `controls`: 해석 전제 조건. 예: 동일 Plan.json, 동일 부하 강도, 슬롯 리소스 대칭, 동일 deploy/update 방식
+
+이 필드는 실행 중 상태나 결과 숫자를 기록하지 않는다. 런타임 진행과 산출물은 `bench/results/<manifest_id>/<run_id>/` 가 단일 진실이다.
 
 ---
 
@@ -182,7 +198,7 @@ hypotheses:
 3. `scenario_mode` 는 Gatling `-PscenarioMode` 실행 계약값이므로 사용자 확인 없이 기록하지 않음. 미확정이면 필드 생략 + `implementation_plan.gatling.scenario_decisions` pending 결정으로 남김
 4. 수집 완료 후 schema cross-check ([00-contracts § Manifest Schema](../00-contracts/README.md)) — 15 core fields 누락 여부 검증
 5. 수집 완료 후 Gatling repo 를 read-only 로 조사한다. 최소 확인값: `git status --porcelain`, 현재 브랜치, `origin/main` 최신 커밋, 관련 Java/PlanGenerator/PlanConfig/Gradle 파일, 기본 4종 mode 로 충분한지 여부.
-6. **매니페스트 YAML 생성 시 `context:` + `implementation_plan:` + `workflow_state:` 절을 반드시 포함.** `context:` 에는 (1b) 비교 변수·슬롯 설명·region 흐름·PlanConfig 확정값/derive값/미확정값을 기록. `implementation_plan.gatling` 에는 리서치 결과 전체를 `research_summary`·`repo_state`·`scenario_decisions`·`change_plan`·`acceptance_checks`·`risks` 로 기록하고 `status: "pending"` 으로 초기화한다. `change_plan` 에는 PlanConfig 생성/수정과 PlanGenerator 실행 검증 작업이 반드시 포함되어야 한다. `workflow_state` 는 첫 미완료 구현 작업을 가리키게 둔다. **이 세션에서 외부 repo 코드 직접 구현 금지** — 계획 기록만.
+6. **매니페스트 YAML 생성 시 `context:` + `implementation_plan:` + `workflow_state:` 절을 반드시 포함.** `context:` 에는 (1b) 비교 변수·슬롯 설명·region 흐름·PlanConfig 확정값/derive값/미확정값과 post-run 해석용 `purpose`·`comparison_axis`·`decision_question`·`interpretation_focus`·`controls` 를 기록. `implementation_plan.gatling` 에는 리서치 결과 전체를 `research_summary`·`repo_state`·`scenario_decisions`·`change_plan`·`acceptance_checks`·`risks` 로 기록하고 `status: "pending"` 으로 초기화한다. `change_plan` 에는 PlanConfig 생성/수정과 PlanGenerator 실행 검증 작업이 반드시 포함되어야 한다. `workflow_state` 는 첫 미완료 구현 작업을 가리키게 둔다. **이 세션에서 외부 repo 코드 직접 구현 금지** — 계획 기록만.
 7. 사용자에게 생성된 매니페스트 YAML을 검토용으로 제시
 
 ### 수정 허용 범위

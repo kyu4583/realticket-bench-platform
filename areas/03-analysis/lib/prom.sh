@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # areas/03-analysis/lib/prom.sh — Prometheus query_range 수집 (atomic write)
-# Source: areas/03-analysis/README.md § 3 모듈 spec
+# Source: areas/03-analysis/README.md § 분석 모듈 스펙
 
 # ─── collect_prometheus: queries[] 각각 수집 ───
 # 인자: <prom_url> <iter_dir> <iter_start_ts> <iter_end_ts> <manifest>

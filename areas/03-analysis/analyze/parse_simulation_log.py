@@ -2,7 +2,7 @@
 """parse_simulation_log.py — Gatling simulation.log 파서.
 
 Source:
-  areas/03-analysis/README.md § 3 분석 모듈
+  areas/03-analysis/README.md § 분석 모듈 스펙
 """
 from __future__ import annotations
 import argparse, json, re, statistics, sys
