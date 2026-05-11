@@ -1,0 +1,4 @@
+interface:
+  display_name: "RealTicket Bench Operator"
+  short_description: "Operate RealTicket benchmark runs"
+  default_prompt: "Use $realticket-bench-operator to start a benchmark manifest."

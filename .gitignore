@@ -9,6 +9,12 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+!.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/realticket-bench-operator/
+!.claude/skills/realticket-bench-operator/SKILL.md
 
 # Python
 __pycache__/

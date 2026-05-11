@@ -2,6 +2,18 @@
 
 ## READ-FIRST (모든 세션 시작 시 반드시 확인)
 
+### Codex 운영 entrypoint
+
+Codex에서 benchmark 운영 작업(매니페스트 시작·재개·preflight/run.sh 실행·결과 확인·외부 repo drift 확인)을 수행할 때는 `$realticket-bench-operator` skill을 먼저 사용한다.
+
+- 등록 위치: `%USERPROFILE%\.codex\skills\realticket-bench-operator`
+- 배포 원본: `.agents/skills/realticket-bench-operator/`
+- 등록 방법: `README.md` § AI skill 등록
+- Claude Code 대응: `.claude/skills/realticket-bench-operator/` + `CLAUDE.md`
+- 단일 진실: schema·Lock·외부 repo 계약·결과 구조는 계속 `areas/*/README.md`
+
+skill이 아직 등록되지 않은 환경에서는 `README.md`의 등록 절차를 먼저 수행한다. 임시로 진행해야 하면 `.agents/skills/realticket-bench-operator/SKILL.md`를 직접 읽고 같은 절차를 따른다.
+
 ### 7 영역 1급 시민 (rev 2 — 2026-05-02 재정의)
 
 본 프로젝트는 **7 영역**으로 구성되며, 모든 phase·plan·decision은 *어느 영역에 속하는지* 표기한다. (원안 6영역 → 7영역으로 재정의: `00-contracts` 신설·VM 비대 분리·외부 통합 영역 재정의)
@@ -115,6 +127,15 @@ Use these entry points:
 - `/gsd-execute-phase` for planned phase work
 
 Do not make direct repo edits outside a GSD workflow unless the user explicitly asks to bypass it.
+
+## Commit Message Convention
+
+- Subject는 conventional prefix(`feat`, `fix`, `docs`, `chore` 등)를 사용하고, 필요하면 scope를 붙인다.
+- Subject 본문은 기존 히스토리처럼 영어와 한국어를 자연스럽게 섞어도 된다. 억지로 영어만 쓰지 않는다.
+- Body는 "무엇을 구현했는가"보다 "어떤 목적인가", "왜 이렇게 했는가"를 중심으로 쓴다.
+- Subject만으로 목적이 충분히 명확하면 body를 생략한다.
+- Body가 두 줄 이상이면 bullet 형식으로 작성한다.
+- Trailer(`Co-Authored-By` 등)는 bullet로 만들지 않고 마지막에 별도 유지한다.
 
 ## Developer Profile
 

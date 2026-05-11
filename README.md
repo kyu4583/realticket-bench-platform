@@ -24,6 +24,8 @@
 
 **사용자가 하는 것:** 자연어 명령 + 결과 확인
 
+**AI 운영 entrypoint:** Codex는 `$realticket-bench-operator`, Claude Code는 project skill `realticket-bench-operator`가 절차 진입점이다. 이 repo는 공유 skill 원본을 `.agents/skills/realticket-bench-operator/`에 보관하고, Claude Code project skill은 `.claude/skills/realticket-bench-operator/`에서 그 원본을 참조한다. skill은 운영 workflow만 담고, schema·Lock·외부 repo 계약은 계속 `areas/*/README.md`를 단일 진실로 참조한다.
+
 **AI가 자동으로 수행하는 것:**
 
 1. 매니페스트 수집 — 사용자에게 10단계 질문으로 벤치마크 설계 완성
@@ -37,16 +39,53 @@
 
 ## 시작하기
 
-### 일반 사용자 경로
+### 0단계 — AI skill 사용 준비
 
-**1단계 — 환경 설정 (최초 1회)**
+#### Claude Code
+
+추가 설치가 필요 없다. 최신 변경을 pull한 뒤 **repo root에서 새 Claude Code 세션**을 시작하면, Claude Code가 `.claude/skills/realticket-bench-operator/` project skill을 자동 발견한다.
+
+Claude Code 쪽 skill 본체는 `.claude/skills/realticket-bench-operator/SKILL.md`이며, 실제 운영 workflow는 공유 원본 `.agents/skills/realticket-bench-operator/SKILL.md`를 읽도록 위임한다.
+
+#### Codex
+
+Codex는 사용자별 skill 디렉토리를 사용하므로 최초 1회 등록이 필요하다. **repo root**에서 현재 OS에 맞는 명령을 실행한다.
+
+Windows PowerShell:
+
+```powershell
+$src = ".agents\skills\realticket-bench-operator"
+$dst = "$env:USERPROFILE\.codex\skills\realticket-bench-operator"
+New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
+if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+Copy-Item -Recurse $src $dst
+$env:PYTHONUTF8 = "1"
+python "$env:USERPROFILE\.codex\skills\.system\skill-creator\scripts\quick_validate.py" $dst
+```
+
+macOS / Linux shell:
+
+```bash
+src=".agents/skills/realticket-bench-operator"
+dst="${CODEX_HOME:-$HOME/.codex}/skills/realticket-bench-operator"
+mkdir -p "$(dirname "$dst")"
+rm -rf "$dst"
+cp -R "$src" "$dst"
+PYTHONUTF8=1 python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "$dst"
+```
+
+검증 결과가 `Skill is valid!`이면 **새 Codex 세션**에서 `$realticket-bench-operator`를 사용할 수 있다.
+
+검증 스크립트 경로가 없어 실패하더라도 `Copy-Item` 또는 `cp -R`까지 성공했다면 skill 복사는 완료된 상태다. 이 경우 새 Codex 세션에서 `$realticket-bench-operator`가 보이는지 확인한다.
+
+### 1단계 — 환경 설정 (최초 1회)
 
 ```bash
 cp areas/06-vm-environment/.env.example areas/06-vm-environment/.env
 # areas/06-vm-environment/.env 에 GATLING_DIR, REALTICKET_DIR, VM_HOST, ADMIN_ID, ADMIN_PASSWORD 입력
 ```
 
-**2단계 — AI에게 자연어로 요청**
+### 2단계 — AI에게 자연어로 요청
 
 ```
 "매니페스트 시작하자"
@@ -95,5 +134,7 @@ bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 bench/                         # 매니페스트와 결과 보관소
 areas/                         # 7영역 문서 + 실행/분석 구현
 areas/02-orchestration/run.sh  # 수동 검증용 단일 실행 진입점
+.agents/skills/                # Codex skill 배포 원본
+.claude/skills/                # Claude Code project skill 진입점
 AGENTS.md / CLAUDE.md          # AI 세션 진입 안내
 ```
