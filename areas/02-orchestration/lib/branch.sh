@@ -48,6 +48,50 @@ prepare_gatling_branch() {
 # ─── prepare_realticket_branches: 메타 + 슬롯 브랜치 분기 ───
 # 인자: <manifest_id> <slot_names...>
 # 단일 슬롯 시 메타만, 슬롯 ≥ 2 시 슬롯 브랜치 N개 추가
+_resolve_realticket_source_ref() {
+  local src_ref="$1"
+  [[ -n "$src_ref" ]] || die "_resolve_realticket_source_ref: empty source ref"
+  if git -C "$REALTICKET_DIR" rev-parse --verify --quiet "${src_ref}^{commit}" >/dev/null; then
+    printf '%s\n' "$src_ref"
+    return 0
+  fi
+  if [[ "$src_ref" != origin/* ]] \
+      && git -C "$REALTICKET_DIR" rev-parse --verify --quiet "origin/${src_ref}^{commit}" >/dev/null; then
+    printf '%s\n' "origin/${src_ref}"
+    return 0
+  fi
+  die "_resolve_realticket_source_ref: source ref not found: $src_ref"
+}
+
+validate_realticket_slot_source_refs() {
+  local manifest_id="$1"
+  shift
+  local slot_names=("$@")
+  [[ ${#slot_names[@]} -ge 2 ]] || return 0
+
+  local slot_idx=0
+  local slot src_ref resolved_ref br remote_br
+  for slot in "${slot_names[@]}"; do
+    [[ -z "$slot" ]] && { slot_idx=$((slot_idx + 1)); continue; }
+    src_ref="${SLOT_SOURCE_BRANCH[$slot_idx]:-}"
+    [[ -n "$src_ref" ]] \
+      || die "validate_realticket_slot_source_refs: slots[$slot_idx] '$slot' source_branch is required"
+    resolved_ref=$(_resolve_realticket_source_ref "$src_ref")
+    br="bench/$manifest_id/$slot"
+    remote_br="origin/bench/$manifest_id/$slot"
+    if git -C "$REALTICKET_DIR" rev-parse --verify --quiet "${br}^{commit}" >/dev/null; then
+      git -C "$REALTICKET_DIR" merge-base --is-ancestor "$resolved_ref" "$br" \
+        || die "validate_realticket_slot_source_refs: $br is not based on source_branch '$src_ref' (resolved=$resolved_ref)"
+    fi
+    if git -C "$REALTICKET_DIR" rev-parse --verify --quiet "${remote_br}^{commit}" >/dev/null; then
+      git -C "$REALTICKET_DIR" merge-base --is-ancestor "$resolved_ref" "$remote_br" \
+        || die "validate_realticket_slot_source_refs: $remote_br is not based on source_branch '$src_ref' (resolved=$resolved_ref)"
+    fi
+    log INFO "validate_realticket_slot_source_refs: slot=$slot source=$src_ref resolved=$resolved_ref"
+    slot_idx=$((slot_idx + 1))
+  done
+}
+
 prepare_realticket_branches() {
   local manifest_id="$1"
   shift
@@ -71,13 +115,21 @@ prepare_realticket_branches() {
       local br="bench/$manifest_id/$slot"
       # SLOT_SOURCE_BRANCH[$slot_idx] 가 있으면 그 브랜치를 기점으로 분기
       local src_branch="${SLOT_SOURCE_BRANCH[$slot_idx]:-}"
+      [[ -n "$src_branch" ]] \
+        || die "prepare_realticket_branches: slots[$slot_idx] '$slot' source_branch is required"
+      local resolved_src
+      resolved_src=$(_resolve_realticket_source_ref "$src_branch")
       if git -C "$REALTICKET_DIR" show-ref --verify --quiet "refs/heads/$br"; then
-        git -C "$REALTICKET_DIR" checkout "$br"
-      elif [[ -n "$src_branch" ]]; then
-        git -C "$REALTICKET_DIR" checkout -b "$br" "$src_branch" \
-          || die "prepare_realticket_branches: checkout -b $br from $src_branch failed"
+        if git -C "$REALTICKET_DIR" merge-base --is-ancestor "$resolved_src" "$br"; then
+          git -C "$REALTICKET_DIR" checkout "$br"
+        else
+          log WARN "prepare_realticket_branches: $br is not based on source_branch '$src_branch' (resolved=$resolved_src); recreating"
+          git -C "$REALTICKET_DIR" checkout -B "$br" "$resolved_src" \
+            || die "prepare_realticket_branches: checkout -B $br from $resolved_src failed"
+        fi
       else
-        git -C "$REALTICKET_DIR" checkout -b "$br" "$meta_br"
+        git -C "$REALTICKET_DIR" checkout -b "$br" "$resolved_src" \
+          || die "prepare_realticket_branches: checkout -b $br from $resolved_src failed"
       fi
       slot_idx=$((slot_idx+1))
     done
@@ -188,10 +240,10 @@ REMOTE
 # ─── restore_main_branches: 두 repo 모두 main/dev 복귀 (브랜치 삭제 X) ───
 # 브랜치 영구 보존
 restore_main_branches() {
-  if [[ -n "${GATLING_DIR:-}" && -d "$GATLING_DIR/.git" ]]; then
+  if [[ -n "${GATLING_DIR:-}" && -e "$GATLING_DIR/.git" ]]; then
     git -C "$GATLING_DIR" checkout main 2>/dev/null || true
   fi
-  if [[ -n "${REALTICKET_DIR:-}" && -d "$REALTICKET_DIR/.git" ]]; then
+  if [[ -n "${REALTICKET_DIR:-}" && -e "$REALTICKET_DIR/.git" ]]; then
     git -C "$REALTICKET_DIR" checkout dev 2>/dev/null || true
   fi
   log INFO "restore_main_branches: gatling→main, realticket→dev (branches preserved)"

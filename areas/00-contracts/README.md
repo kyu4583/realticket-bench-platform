@@ -25,7 +25,7 @@
 | 11 | `reset_path` | string (URL path) | ✓ | BE reset endpoint path (`/booking/init/:eventId`) |
 | 12 | `event_ids` | int[] | ✓ | reset 호출할 eventId 배열 (alternating 시 슬롯별 매칭) |
 | 13 | `queries` | object[] (`{name,promql,unit}`) | ✓ | summarize 대상 Prometheus 쿼리 목록 |
-| 14 | `slots` | object[] | ✓ | 슬롯 정의. 최대 2 슬롯 (Lock #3). sub-fields: `name`(✓) `targetUrl`(✓) `image_tag`(✓) `scenario_mode`(◐ 슬롯별 override, 사용자 확인 시에만 기록) `source_branch`(◐ RealTicket 슬롯 브랜치 기점. 미지정 시 `origin/dev`. 02-orchestration 이 소비) |
+| 14 | `slots` | object[] | ✓ | 슬롯 정의. 최대 2 슬롯 (Lock #3). sub-fields: `name`(✓) `targetUrl`(✓) `image_tag`(✓) `scenario_mode`(◐ 슬롯별 override, 사용자 확인 시에만 기록) `source_branch`(◐ RealTicket 슬롯 브랜치 기점. 슬롯 ≥ 2 비교에서는 필수이며 02-orchestration 이 누락·ancestry 불일치를 hard fail 처리) |
 | 15 | `hypotheses` | object[] | ✗ | 가설 절. 미존재 시 `summarize.py`가 가설 섹션 미생성 |
 | + | `bench_stack` | object (`{alpha_test_account, beta_dual_slots, gamma_sentinel, delta_autoscaler}` — 모두 boolean, default `false`) | ✗ | optional. 4 기능 토글. 미존재 시 모두 disabled — base.yml 단독 deploy |
 | + | `context` | object | ✗ | optional. 실험 목적·비교 변수·설계 결정 기록. **run.sh 미소비**. 매니페스트 작성 세션에서 AI가 논의 내용을 채우며, 완료 후 사용자가 자연어로 요청하는 `SUMMARY.md` 목적 기반 해석의 1차 입력으로 사용 |
@@ -92,7 +92,7 @@ implementation_plan:
       - "alpha_test_account=true 일 때 login 액션 생략 필요"
 ```
 
-`run.sh` 의 실행 전 preflight 는 최소한 `implementation_plan.status == completed`, `implementation_plan.gatling.research_summary` 존재, `implementation_plan.gatling.change_plan` 1개 이상을 검사한다.
+`run.sh` 의 실행 전 preflight 는 최소한 `implementation_plan.status == completed`, `implementation_plan.gatling.research_summary` 존재, `implementation_plan.gatling.change_plan` 1개 이상, 슬롯 ≥ 2 비교의 `slots[].source_branch` 존재와 `bench/<manifest_id>/<slot>` ancestry 일치를 검사한다.
 
 ### `workflow_state` 재개 구조
 

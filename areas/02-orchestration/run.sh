@@ -69,22 +69,6 @@ main() {
   if ! [[ "$gatling_change_count" =~ ^[0-9]+$ ]] || (( gatling_change_count < 1 )); then
     die "implementation_plan.gatling.change_plan must contain at least one planned change before execution"
   fi
-  if [[ "${BENCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
-    log INFO "preflight passed for manifest_id=$MANIFEST_ID"
-    return 0
-  fi
-
-  run_id="${run_id_prefix}-${utc_ts}"
-  manifest_results_dir="$REPO_ROOT/bench/results/$MANIFEST_ID"
-  run_dir="$manifest_results_dir/$run_id"
-  mkdir -p "$run_dir"
-  : > "$run_dir/run.log"
-  exec > >(tee -a "$run_dir/run.log") 2>&1
-
-  # RUNNING 마커 (Lock #4)
-  : > "$run_dir/RUNNING"
-  log INFO "main: run_id=$run_id manifest_id=$MANIFEST_ID run_dir=$run_dir"
-
   # SLOT_TARGETS 배열 빌드 (manifest.slots[].targetUrl)
   local slot_count slot_names
   slot_count=$(manifest_yq 'slots | length' "$manifest")
@@ -158,6 +142,26 @@ main() {
   [[ "$gatling_base_ref" == "null" || -z "$gatling_base_ref" ]] && gatling_base_ref="origin/main"
   [[ "$gatling_local_only" == "true" ]] && export GATLING_LOCAL_ONLY=1 || export GATLING_LOCAL_ONLY=0
   export GATLING_BASE_REF="$gatling_base_ref"
+
+  git -C "$REALTICKET_DIR" fetch origin
+
+  if [[ "${BENCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
+    # shellcheck disable=SC2086
+    validate_realticket_slot_source_refs "$MANIFEST_ID" $slot_names
+    log INFO "preflight passed for manifest_id=$MANIFEST_ID"
+    return 0
+  fi
+
+  run_id="${run_id_prefix}-${utc_ts}"
+  manifest_results_dir="$REPO_ROOT/bench/results/$MANIFEST_ID"
+  run_dir="$manifest_results_dir/$run_id"
+  mkdir -p "$run_dir"
+  : > "$run_dir/run.log"
+  exec > >(tee -a "$run_dir/run.log") 2>&1
+
+  # RUNNING 마커 (Lock #4)
+  : > "$run_dir/RUNNING"
+  log INFO "main: run_id=$run_id manifest_id=$MANIFEST_ID run_dir=$run_dir"
 
   cleanup_external_repos=1
   prepare_gatling_branch "$MANIFEST_ID"

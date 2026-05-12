@@ -93,4 +93,4 @@ templates/
 - 4 토글 정의 + 운영 정책 lock — [`areas/02-orchestration/README.md` § 이미지 swap·stack restart 절차](../README.md#이미지-swapstack-restart-절차)
 - bench-stack 폴더 컨벤션 — [`areas/05-realticket-integration/README.md` § bench-stack yml 컨벤션](../../05-realticket-integration/README.md#bench-stack-yml-컨벤션)
 - 이미지 swap·stack restart 절차 — [`areas/02-orchestration/README.md` § 이미지 swap·stack restart 절차](../README.md#이미지-swapstack-restart-절차)
-- nest 빌드 Dockerfile 기본값 — [`areas/05-realticket-integration/README.md` § build_vm_images() VM 빌드 3단계](../../05-realticket-integration/README.md#build_vm_images-vm-빌드-3단계) + `areas/04-gatling-integration/lib/gatling.sh:build_vm_images`
+- nest 빌드 Dockerfile 기본값 — [`areas/05-realticket-integration/README.md` § build_vm_images() VM 빌드 4단계](../../05-realticket-integration/README.md#build_vm_images-vm-빌드-4단계) + `areas/04-gatling-integration/lib/gatling.sh:build_vm_images`

@@ -16,7 +16,7 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 | 4 | `prepare_realticket_branches()` | branch | RealTicket repo 메타·슬롯 브랜치 분기 |
 | 5 | `generate_bench_stack_yml()` | branch | `areas/02-orchestration/templates/docker-stack.base.yml` → α/β/γ/δ 변형 → `bench-stack/<manifest_id>.yml` 생성 |
 | 6 | `apply_untracked_overrides()` | branch | VM에 git 미추적 빌드 파일 scp 적용 + 경로 목록 기록 |
-| 7 | `build_vm_images()` | branch | VM: 매니페스트 ID 브랜치 pull → Dockerfile.dev-in-local 빌드 → docker stack deploy |
+| 7 | `build_vm_images()` | branch | VM: 매니페스트 ID 브랜치 pull → Dockerfile.dev-in-local 빌드 → 기존 stack 제거·대기 → docker stack deploy |
 | 8 | `admin_login()` | lifecycle | RealTicket `POST /user/login`으로 ADMIN SID 쿠키 획득 + HTTP 200 검증 |
 | 9 | `reset_slots()` | lifecycle | 활성 슬롯의 `event_ids[]`에 `POST /booking/init/:eventId` ADMIN 호출 |
 | 10 | `get_slot_for_iter()` | lifecycle | iteration 회차(1..N)로 슬롯 선택. `idx = (iter-1) % len(slots)` — Lock #3 alternating |
@@ -26,7 +26,7 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 | 14 | `write_iter_meta()` | lifecycle | iter 디렉토리에 메타(slot·image_tag·started_at·completed_at·exit_code) JSON 작성 |
 | 15 | `rollback_untracked_overrides()` | branch | `untracked-overrides.list`의 경로만 VM에서 롤백. 다른 환경 변경 금지 |
 | 16 | `restore_main_branches()` | branch | gatling + RealTicket repo 모두 main 체크아웃 복귀. 브랜치 삭제 X |
-| 17 | `cleanup_on_exit()` + `main()` | lifecycle | `trap EXIT`. RUNNING → FAILED 원자 전이 + rollback + restore 호출. `main()` = 전체 오케스트레이션 |
+| 17 | `cleanup_on_exit()` + `main()` | lifecycle | `trap EXIT`. RUNNING → FAILED 원자 전이 + stack rm + rollback + restore 호출. `main()` = 전체 오케스트레이션 |
 
 ---
 
@@ -35,7 +35,7 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 ### 준비 단계 (매니페스트 실행 시작)
 
 ```
-implementation_plan preflight # status=completed + Gatling research/change_plan 확인
+implementation_plan preflight # status=completed + Gatling research/change_plan + slot source ancestry 확인
 prepare_gatling_branch()      # 3번 함수
 prepare_realticket_branches() # 4번 함수
 generate_bench_stack_yml()    # 5번 함수
@@ -45,7 +45,7 @@ build_vm_images()             # 7번 함수
 admin_login()                 # 8번 함수
 ```
 
-검증 전용으로 `BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh <manifest>` 를 실행하면 preflight 통과 여부만 확인하고 외부 repo 브랜치·VM·결과 디렉토리는 건드리지 않는다.
+검증 전용으로 `BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh <manifest>` 를 실행하면 preflight 통과 여부만 확인한다. 이때 RealTicket 원격 ref 확인을 위해 `git fetch origin` 은 수행하지만, 외부 repo 브랜치 생성·수정, VM 작업, 결과 디렉토리 생성은 하지 않는다.
 
 ### iter 루프 (매니페스트 실행)
 
@@ -113,10 +113,11 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 1. `generate_bench_stack_yml()` 결과를 메타·슬롯 브랜치에 반영한다.
 2. `push_realticket_branches_to_origin()`가 메타·슬롯 브랜치의 `prometheus/prometheus.yml` scrape_interval=1s 를 보장한 뒤 push한다.
 3. `apply_untracked_overrides()`가 필요한 VM 미추적 빌드 파일만 명시 목록으로 배치한다.
-4. `build_vm_images()`가 VM에서 매니페스트 ID 브랜치를 pull하고 슬롯별 `nest:<manifest_id>` 이미지를 빌드한다.
-5. `build_vm_images()`가 meta 브랜치의 `bench-stack/<manifest_id>.yml` + `prometheus/prometheus.yml` 로 stack을 갱신하고 Prometheus 서비스를 재시작한다.
+4. `build_vm_images()`가 VM 빌드 직전 슬롯 source ancestry를 재검증한 뒤, VM에서 매니페스트 ID 브랜치를 pull하고 슬롯별 `nest:<manifest_id>` 이미지를 빌드한다.
+5. `build_vm_images()`가 VM의 기존 `realticket` stack 존재 여부를 확인하고, 존재하면 `docker stack rm realticket` 후 서비스·컨테이너·네트워크가 사라질 때까지 대기한다.
+6. `build_vm_images()`가 meta 브랜치의 `bench-stack/<manifest_id>.yml` + `prometheus/prometheus.yml` 로 stack을 새로 deploy하고 Prometheus 서비스를 재시작한다.
 
-실패 또는 종료 시 `rollback_untracked_overrides()`와 `restore_main_branches()`가 cleanup 경로에서 호출된다. 외부 repo 브랜치는 삭제하지 않는다.
+실패 또는 종료 시 `remove_realticket_stack_if_present()`, `rollback_untracked_overrides()`, `restore_main_branches()`가 cleanup 경로에서 호출된다. 외부 repo 브랜치는 삭제하지 않는다.
 
 ---
 
@@ -170,7 +171,7 @@ concurrent dual 부하는 영구 미지원 — 구현 추가도 lock 위배.
 
 **iter 루프:** alternating으로 슬롯 선택 → run_gatling → collect_prometheus → write_progress 순서 반복
 
-**복귀 단계:** restore_main_branches (정상·실패·SIGINT 모두)
+**복귀 단계:** remove_realticket_stack_if_present → restore_main_branches (정상·실패·SIGINT 모두)
 
 ### 행동 금지
 

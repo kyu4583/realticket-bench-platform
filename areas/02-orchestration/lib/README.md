@@ -21,7 +21,7 @@
 | `areas/02-orchestration/lib/util.sh` | `parse_duration` · `manifest_yq` (+ 공통 logger · exit 코드 상수) |
 | `areas/02-orchestration/lib/lifecycle.sh` | `admin_login` · `reset_slots` · `get_slot_for_iter` · `write_progress` · `write_iter_meta` · `cleanup_on_exit` |
 | `areas/02-orchestration/lib/branch.sh` | `prepare_gatling_branch` · `prepare_realticket_branches` · `apply_untracked_overrides` · `rollback_untracked_overrides` · `restore_main_branches` |
-| `areas/04-gatling-integration/lib/gatling.sh` | `run_gatling` · `build_vm_images` |
+| `areas/04-gatling-integration/lib/gatling.sh` | `run_gatling` · `build_vm_images` · `remove_realticket_stack_if_present` |
 | `areas/03-analysis/lib/prom.sh` | `collect_prometheus` |
 | `areas/02-orchestration/lib/bench_stack.sh` | `generate_bench_stack_yml` |
 | `areas/02-orchestration/run.sh` (lib 외부, 진입점) | `main` |

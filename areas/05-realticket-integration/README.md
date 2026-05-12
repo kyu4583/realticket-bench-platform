@@ -51,18 +51,21 @@ curl -X POST 'http://192.168.138.2:8080/booking/init/<eventId>' \
 
 1. RealTicket repo dev 브랜치 최신 상태 확인 (`git fetch origin`)
 2. `bench/<manifest_id>/meta` 메타 브랜치 분기 (슬롯 수 무관, 항상 생성)
-3. 슬롯 ≥ 2이면 `bench/<manifest_id>/<slot_name>` 슬롯 브랜치 추가 분기
-4. 매니페스트 의도에 맞는 코드 변경 적용 (각 슬롯 브랜치별)
-5. `bench-stack/<manifest_id>.yml` 작성 (generate_bench_stack_yml 결과를 메타 브랜치에 commit, `--no-verify` 필수)
-6. 슬롯 브랜치에 동일 yml cherry-pick (`--no-verify` 필수)
-7. 메타·슬롯 브랜치의 `prometheus/prometheus.yml` `scrape_interval` 을 `1s` 로 보정하고 변경 시 commit
-8. 모든 브랜치 origin push (재실행 시 기존 브랜치를 `bench/<id>-before-<TS>`로 보존 후 force push)
+3. 슬롯 ≥ 2이면 각 `slots[].source_branch` 를 해석하고, 누락 시 중단한다.
+4. 기존 `bench/<manifest_id>/<slot_name>` 슬롯 브랜치가 source ancestry 를 만족하지 않으면 재생성하고, 새 슬롯 브랜치는 source branch 에서 직접 분기한다.
+5. 매니페스트 의도에 맞는 코드 변경 적용 (각 슬롯 브랜치별)
+6. `bench-stack/<manifest_id>.yml` 작성 (generate_bench_stack_yml 결과를 메타 브랜치에 commit, `--no-verify` 필수)
+7. 슬롯 브랜치에 동일 yml cherry-pick (`--no-verify` 필수)
+8. 메타·슬롯 브랜치의 `prometheus/prometheus.yml` `scrape_interval` 을 `1s` 로 보정하고 변경 시 commit
+9. 모든 브랜치 origin push (재실행 시 기존 브랜치를 `bench/<id>-before-<TS>`로 보존 후 force push)
 
 ---
 
-## build_vm_images() VM 빌드 3단계
+## build_vm_images() VM 빌드 4단계
 
-단계 (1)·(2)는 **슬롯별로 반복** 수행. 단계 (3)은 슬롯 수 무관 1회.
+단계 (1)·(2)는 **슬롯별로 반복** 수행. 단계 (3)·(4)는 슬롯 수 무관 1회.
+
+VM 빌드 전에도 `validate_realticket_slot_source_refs()` 를 다시 실행한다. local 준비 단계와 VM 빌드 사이에 슬롯 브랜치가 잘못 바뀌면 Docker image build 로 넘어가지 않고 중단한다.
 
 ```bash
 # (1) VM에서 원격 fetch
@@ -74,8 +77,12 @@ ssh VM_ubuntu "cd ~/web04-RealTicket && git checkout -B 'bench/<manifest_id>' 'o
 # 슬롯 N개 (각 슬롯마다):
 ssh VM_ubuntu "cd ~/web04-RealTicket && git checkout -B 'bench/<manifest_id>/<slot_name>' 'origin/bench/<manifest_id>/<slot_name>' && docker build -f back/Dockerfile.dev-in-local -t 'nest:<manifest_id>-<slot_name>' back/"
 
-# (3) bench-stack/<manifest_id>.yml + prometheus/prometheus.yml 로 stack deploy — 슬롯 수 무관 1회
-ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/<manifest_id>/meta' -- 'bench-stack/<manifest_id>.yml' 'prometheus/prometheus.yml' && docker stack deploy -c 'bench-stack/<manifest_id>.yml' realticket"```
+# (3) 기존 stack 제거 및 충분한 대기 — stack 이 있을 때만 1회
+ssh VM_ubuntu "docker stack rm realticket"
+# 서비스·컨테이너·네트워크가 모두 사라질 때까지 polling (기본 180초)
+
+# (4) bench-stack/<manifest_id>.yml + prometheus/prometheus.yml 로 stack deploy — 슬롯 수 무관 1회
+ssh VM_ubuntu "cd ~/web04-RealTicket && git fetch origin && git checkout 'origin/bench/<manifest_id>/meta' -- 'bench-stack/<manifest_id>.yml' 'prometheus/prometheus.yml' && docker stack deploy -c 'bench-stack/<manifest_id>.yml' realticket"
 ```
 
 ---
@@ -153,9 +160,9 @@ RealTicket dev에 변경이 생긴 경우 아래 명령으로 최신 커밋을 �
 ### 수행하는 행동
 
 - 매니페스트 시작 시: `prepare_realticket_branches()` + Prometheus scrape_interval 보정 + push 실행
-- VM 빌드: `build_vm_images()` 3단계 ssh 트리거
+- VM 빌드: `build_vm_images()` 4단계 ssh 트리거
 - 실행 전 구현/브랜치 작업을 수동 세션에서 진행할 때는 관련 `implementation_plan.realticket`/`implementation_plan.git` 작업의 `done` 값과 매니페스트 `workflow_state` 를 함께 갱신
-- 매니페스트 종료 시: `restore_main_branches()` (main 복귀, 브랜치 삭제 X)
+- 매니페스트 종료 시: `remove_realticket_stack_if_present()` 후 `restore_main_branches()` (stack 제거, main 복귀, 브랜치 삭제 X)
 
 ### 행동 금지
 

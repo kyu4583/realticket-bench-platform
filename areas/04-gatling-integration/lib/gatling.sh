@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # areas/04-gatling-integration/lib/gatling.sh — Gatling 호출 + VM 이미지 빌드
 # Source: areas/04-gatling-integration/README.md § -P 키 표 (8개) + prepare_gatling_branch() 수행 순서
-# Source: areas/05-realticket-integration/README.md § build_vm_images() VM 빌드 3단계
+# Source: areas/05-realticket-integration/README.md § build_vm_images() VM 빌드 4단계
 # Source: areas/02-orchestration/README.md § 이미지 swap·stack restart 절차
 
 # ─── run_gatling: 8 -P 키 + simulation.log 수집 ───
@@ -95,6 +95,11 @@ build_vm_images() {
   shift
   local slot_names=("$@")
 
+  if declare -F validate_realticket_slot_source_refs >/dev/null 2>&1; then
+    git -C "$REALTICKET_DIR" fetch origin
+    validate_realticket_slot_source_refs "$manifest_id" "${slot_names[@]}"
+  fi
+
   # 'git checkout <tree-ish> -- <file>' 은 파일을 stage 에 올린다.
   # 이전 run 의 stack deploy 가 prometheus.yml 을 stage 에 남겨두면 다음 run 의
   # git checkout -B 가 거부된다. git reset --hard HEAD 로 index+worktree 를 HEAD 로 리셋한다.
@@ -102,7 +107,7 @@ build_vm_images() {
   local _hard_reset="git reset --hard HEAD 2>/dev/null || true"
 
   if [[ ${#slot_names[@]} -le 1 ]]; then
-    # 단일 슬롯 — 메타 브랜치 (05 README § VM 빌드 3단계 — origin 강제 동기화)
+    # 단일 슬롯 — 메타 브랜치 (05 README § VM 빌드 4단계 — origin 강제 동기화)
     ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && $_hard_reset && git checkout -B 'bench/$manifest_id/meta' 'origin/bench/$manifest_id/meta' && docker build -f back/Dockerfile.dev-in-local -t 'nest:$manifest_id' back/" \
       || die "build_vm_images failed for $manifest_id"
   else
@@ -116,6 +121,7 @@ build_vm_images() {
   # bench-stack/<id>.yml 가져와서 stack deploy (메타 브랜치 origin 기준)
   # git checkout origin/bench/$manifest_id/meta 로 origin 최신 파일을 직접 취득 (로컬 브랜치 캐시 우회)
   # stack deploy 후 git reset --hard 로 stage 를 정리해 다음 run 의 checkout 충돌 방지
+  remove_realticket_stack_if_present
   ssh "$VM_HOST" "cd ~/web04-RealTicket && git fetch origin && $_hard_reset && git checkout 'origin/bench/$manifest_id/meta' -- 'bench-stack/$manifest_id.yml' 'prometheus/prometheus.yml' && docker stack deploy -c 'bench-stack/$manifest_id.yml' realticket && git reset --hard HEAD" \
     || die "stack deploy failed for $manifest_id"
 
@@ -126,6 +132,55 @@ build_vm_images() {
   ssh "$VM_HOST" 'docker service update --force realticket_nest-candidate' 2>/dev/null || true
   _wait_stack_healthy
   log INFO "build_vm_images: build + stack deploy + force-restart + health check completed for $manifest_id"
+}
+
+remove_realticket_stack_if_present() {
+  local stack_name="${REALTICKET_STACK_NAME:-realticket}"
+  local timeout_s="${STACK_REMOVE_TIMEOUT_S:-180}"
+  local interval="${STACK_REMOVE_POLL_INTERVAL_S:-5}"
+
+  [[ "$stack_name" =~ ^[A-Za-z0-9_-]+$ ]] \
+    || die "remove_realticket_stack_if_present: invalid stack name '$stack_name'"
+  [[ "$timeout_s" =~ ^[0-9]+$ && "$timeout_s" -gt 0 ]] \
+    || die "remove_realticket_stack_if_present: invalid timeout '$timeout_s'"
+  [[ "$interval" =~ ^[0-9]+$ && "$interval" -gt 0 ]] \
+    || die "remove_realticket_stack_if_present: invalid interval '$interval'"
+
+  local stacks
+  stacks=$(ssh "$VM_HOST" "docker stack ls --format '{{.Name}}'") \
+    || die "remove_realticket_stack_if_present: docker stack ls failed on $VM_HOST"
+
+  if printf '%s\n' "$stacks" | grep -Fx "$stack_name" >/dev/null; then
+    log INFO "remove_realticket_stack_if_present: removing existing stack '$stack_name'"
+    ssh "$VM_HOST" "docker stack rm '$stack_name'" \
+      || die "remove_realticket_stack_if_present: docker stack rm failed for '$stack_name'"
+    _wait_stack_removed "$stack_name" "$timeout_s" "$interval"
+  else
+    log INFO "remove_realticket_stack_if_present: stack '$stack_name' not present"
+  fi
+}
+
+_wait_stack_removed() {
+  local stack_name="$1"
+  local timeout_s="$2"
+  local interval="$3"
+  local deadline=$(( $(date +%s) + timeout_s ))
+
+  log INFO "_wait_stack_removed: polling stack removal (stack=$stack_name timeout=${timeout_s}s interval=${interval}s)"
+  while [[ $(date +%s) -le $deadline ]]; do
+    local remaining
+    remaining=$(ssh "$VM_HOST" \
+      "svc=\$(docker service ls --filter label=com.docker.stack.namespace=$stack_name --format '{{.Name}}' | wc -l); ctr=\$(docker ps -a --filter label=com.docker.stack.namespace=$stack_name --format '{{.ID}}' | wc -l); net=\$(docker network ls --filter label=com.docker.stack.namespace=$stack_name --format '{{.Name}}' | wc -l); echo \$((svc + ctr + net))" \
+      2>/dev/null) || remaining=999
+    remaining="${remaining//[[:space:]]/}"
+    if [[ "$remaining" == "0" ]]; then
+      log INFO "_wait_stack_removed: stack '$stack_name' fully removed"
+      return 0
+    fi
+    log INFO "_wait_stack_removed: remaining resources=$remaining — retry in ${interval}s"
+    sleep "$interval"
+  done
+  die "_wait_stack_removed: stack '$stack_name' still has resources after ${timeout_s}s"
 }
 
 # ─── _wait_stack_healthy: realticket 스택 모든 서비스 REPLICAS N/N 확인 ───
