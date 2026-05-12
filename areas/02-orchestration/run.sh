@@ -120,6 +120,45 @@ main() {
   done
 
   # 매니페스트 ID 브랜치 lifecycle
+  local scenario_family plan_config_used
+  scenario_family=$(manifest_yq 'context.load_model.scenario_family' "$manifest")
+  plan_config_used=$(manifest_yq 'context.plan_config.used' "$manifest")
+  if [[ "$scenario_family" == "waiting_queue_sse" || "$plan_config_used" == "false" ]]; then
+    local alpha_test_account wq_clients wq_permission_ramp wq_pre_subscription_wait wq_subscription_ramp wq_hold
+    alpha_test_account=$(manifest_yq 'bench_stack.alpha_test_account' "$manifest")
+    wq_clients=$(manifest_yq 'context.load_model.concurrent_clients' "$manifest")
+    wq_permission_ramp=$(manifest_yq 'context.load_model.permission_ramp_up' "$manifest")
+    wq_pre_subscription_wait=$(manifest_yq 'context.load_model.pre_subscription_wait' "$manifest")
+    wq_subscription_ramp=$(manifest_yq 'context.load_model.subscription_ramp_up' "$manifest")
+    wq_hold=$(manifest_yq 'context.load_model.hold' "$manifest")
+    [[ "$alpha_test_account" == "null" || -z "$alpha_test_account" ]] && alpha_test_account=false
+    [[ "$wq_clients" == "null" || -z "$wq_clients" ]] && wq_clients=1300
+    [[ "$wq_permission_ramp" == "null" || -z "$wq_permission_ramp" ]] && wq_permission_ramp="10s"
+    [[ "$wq_pre_subscription_wait" == "null" || -z "$wq_pre_subscription_wait" ]] && wq_pre_subscription_wait="50s"
+    [[ "$wq_subscription_ramp" == "null" || -z "$wq_subscription_ramp" ]] && wq_subscription_ramp="10s"
+    [[ "$wq_hold" == "null" || -z "$wq_hold" ]] && wq_hold="2m"
+    [[ "$wq_clients" =~ ^[0-9]+$ && "$wq_clients" -gt 0 ]] \
+      || die "context.load_model.concurrent_clients must be a positive integer"
+
+    export WAITING_QUEUE_NO_PLAN=1
+    export BENCH_TEST_ACCOUNT_ALREADY_STORED="$alpha_test_account"
+    export WAITING_QUEUE_USER_COUNT="$wq_clients"
+    export WAITING_QUEUE_PERMISSION_RAMP_MILLIS=$(( $(parse_duration "$wq_permission_ramp") * 1000 ))
+    export WAITING_QUEUE_PRE_SUBSCRIPTION_WAIT_MILLIS=$(( $(parse_duration "$wq_pre_subscription_wait") * 1000 ))
+    export WAITING_QUEUE_SUBSCRIPTION_RAMP_MILLIS=$(( $(parse_duration "$wq_subscription_ramp") * 1000 ))
+    export WAITING_QUEUE_HOLD_MILLIS=$(( $(parse_duration "$wq_hold") * 1000 ))
+    log INFO "main: waiting queue no-plan mode -- clients=$WAITING_QUEUE_USER_COUNT permission_ramp_ms=$WAITING_QUEUE_PERMISSION_RAMP_MILLIS pre_sub_wait_ms=$WAITING_QUEUE_PRE_SUBSCRIPTION_WAIT_MILLIS subscription_ramp_ms=$WAITING_QUEUE_SUBSCRIPTION_RAMP_MILLIS hold_ms=$WAITING_QUEUE_HOLD_MILLIS test_account_already_stored=$BENCH_TEST_ACCOUNT_ALREADY_STORED"
+  else
+    export WAITING_QUEUE_NO_PLAN=0
+  fi
+
+  local gatling_base_ref gatling_local_only
+  gatling_base_ref=$(manifest_yq 'implementation_plan.gatling.base' "$manifest")
+  gatling_local_only=$(manifest_yq 'implementation_plan.gatling.local_only' "$manifest")
+  [[ "$gatling_base_ref" == "null" || -z "$gatling_base_ref" ]] && gatling_base_ref="origin/main"
+  [[ "$gatling_local_only" == "true" ]] && export GATLING_LOCAL_ONLY=1 || export GATLING_LOCAL_ONLY=0
+  export GATLING_BASE_REF="$gatling_base_ref"
+
   cleanup_external_repos=1
   prepare_gatling_branch "$MANIFEST_ID"
   # shellcheck disable=SC2086
@@ -145,7 +184,21 @@ main() {
   # PlanGenerator 가 자연 종료로 simulation_duration_ms 를 결정 — 매니페스트는 per_run 입력 X
   local plan_full_path config_file plan_max_ms per_run_ms main_booking_ms main_booking_s
   local static_wait_ms runner_overhead_s estimated_iter_s min_iter_estimate_s
-  plan_full_path="$GATLING_DIR/$plan_path"
+  if [[ "${WAITING_QUEUE_NO_PLAN:-0}" == "1" ]]; then
+    runner_overhead_s="${BENCH_RUNNER_OVERHEAD_S:-20}"
+    [[ "$runner_overhead_s" =~ ^[0-9]+$ ]] || die "BENCH_RUNNER_OVERHEAD_S must be a non-negative integer"
+    plan_max_ms=$(( WAITING_QUEUE_PERMISSION_RAMP_MILLIS + WAITING_QUEUE_PRE_SUBSCRIPTION_WAIT_MILLIS + WAITING_QUEUE_SUBSCRIPTION_RAMP_MILLIS + WAITING_QUEUE_HOLD_MILLIS ))
+    [[ "$plan_max_ms" -gt 0 ]] || die "waiting queue timing total must be > 0"
+    per_run_ms="$plan_max_ms"
+    main_booking_ms="$per_run_ms"
+    main_booking_s=$(ceil_div "$main_booking_ms" 1000)
+    static_wait_ms=0
+    estimated_iter_s=$(derive_initial_iter_wall_s "$main_booking_ms" "$static_wait_ms" "$runner_overhead_s")
+    min_iter_estimate_s=$(derive_initial_iter_wall_s "$main_booking_ms" "$static_wait_ms" 0)
+    log INFO "main: waiting queue timing estimate -- permission_ramp_ms=$WAITING_QUEUE_PERMISSION_RAMP_MILLIS pre_sub_wait_ms=$WAITING_QUEUE_PRE_SUBSCRIPTION_WAIT_MILLIS subscription_ramp_ms=$WAITING_QUEUE_SUBSCRIPTION_RAMP_MILLIS hold_ms=$WAITING_QUEUE_HOLD_MILLIS runner_overhead_s=$runner_overhead_s estimated_iter_s=$estimated_iter_s"
+    log INFO "main: analysis region derived -- plan_max_ms=$plan_max_ms main_booking_ms=$main_booking_ms (main_booking_s=$main_booking_s)"
+  else
+    plan_full_path="$GATLING_DIR/$plan_path"
   [[ -f "$plan_full_path" ]] || die "Plan.json not found: $plan_full_path (PlanGenerator 실행 누락 의심)"
   plan_max_ms=$(jq -r '.stats.simulation_duration_ms // 0' "$plan_full_path")
   [[ "$plan_max_ms" -gt 0 ]] || die "Plan.json stats.simulation_duration_ms 가 0 — Plan 미생성 의심"
@@ -161,6 +214,7 @@ main() {
   min_iter_estimate_s=$(derive_initial_iter_wall_s "$main_booking_ms" "$static_wait_ms" 0)
   log INFO "main: timing estimate -- plan_max_ms=$plan_max_ms main_booking_ms=$main_booking_ms static_wait_ms=$static_wait_ms runner_overhead_s=$runner_overhead_s estimated_iter_s=$estimated_iter_s"
   log INFO "main: analysis region derived -- plan_max_ms=$plan_max_ms main_booking_ms=$main_booking_ms (main_booking_s=$main_booking_s)"
+  fi
 
   local manifest_iterations manifest_duration duration_mode dur_s duration_budget_s duration_deadline_epoch
   manifest_iterations=$(manifest_yq 'iterations' "$manifest")

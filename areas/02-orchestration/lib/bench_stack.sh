@@ -132,6 +132,15 @@ generate_bench_stack_yml() {
           fi
         fi
       fi
+      if ! git -C "$REALTICKET_DIR" cat-file -e "HEAD:bench-stack/$manifest_id.yml" 2>/dev/null; then
+        git -C "$REALTICKET_DIR" checkout "$last_commit" -- "bench-stack/$manifest_id.yml" \
+          || die "bench-stack yml fallback checkout failed for slot=$slot manifest_id=$manifest_id"
+        git -C "$REALTICKET_DIR" add "bench-stack/$manifest_id.yml" \
+          || die "bench-stack yml fallback add failed for slot=$slot manifest_id=$manifest_id"
+        git -C "$REALTICKET_DIR" commit --no-verify \
+          -m "bench: $manifest_id bench-stack yml" \
+          || die "bench-stack yml fallback commit failed for slot=$slot manifest_id=$manifest_id"
+      fi
     done
     # 메타 브랜치 복귀
     git -C "$REALTICKET_DIR" checkout "bench/$manifest_id/meta" \

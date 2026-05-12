@@ -1,0 +1,253 @@
+manifest_id: "waiting-queue-policy"
+run_id_prefix: "waiting-queue-policy"
+
+duration: "3h"
+
+warmup: "30s"
+cooldown: "30s"
+
+max_failures: 2
+
+plan_path: "app/src/gatling/resources/Plan.json"
+
+prom_url: "http://192.168.138.2:9090"
+prom_step: "1s"
+
+reset_path: "/booking/init/:eventId"
+event_ids:
+  - 1
+
+queries:
+  - name: "http_request_rate"
+    promql: "rate(http_requests_total{job=~\"nest-.*\"}[2s])"
+    unit: "req/s"
+  - name: "http_error_rate"
+    promql: "rate(http_requests_total{job=~\"nest-.*\",status=~\"5..\"}[2s])"
+    unit: "req/s"
+  - name: "event_loop_lag"
+    promql: "nodejs_eventloop_lag_seconds{job=~\"nest-.*\"}"
+    unit: "seconds"
+  - name: "gc_duration"
+    promql: "rate(nodejs_gc_duration_seconds_sum{job=~\"nest-.*\"}[2s])"
+    unit: "seconds/s"
+  - name: "node_cpu"
+    promql: "rate(container_cpu_usage_seconds_total{job=\"cadvisor\",name=~\"realticket_nest.*\"}[4s])"
+    unit: "cores"
+  - name: "node_memory"
+    promql: "container_memory_rss{job=\"cadvisor\",name=~\"realticket_nest.*\"}"
+    unit: "bytes"
+
+slots:
+  - name: "baseline"
+    targetUrl: "http://192.168.138.2:8080"
+    image_tag: "nest:waiting-queue-policy-baseline"
+    source_branch: "origin/bench/individual-waiting-sse"
+    scenario_mode: "WAITING_QUEUE"
+
+  - name: "candidate"
+    targetUrl: "http://192.168.138.2:8081"
+    image_tag: "nest:waiting-queue-policy-candidate"
+    source_branch: "bench/existing-waiting-sse"
+    scenario_mode: "WAITING_QUEUE"
+
+hypotheses:
+  - id: "H1"
+    metric: "node_cpu"
+    compare: "qualitative: baseline > candidate"
+    rationale: >
+      baseline(대기 큐 SSE 갱신 정책 미적용)은 서버가 각 SSE 클라이언트마다
+      userOrder, totalWaiting, restMilisecond, enteringStatus를 개별 계산/전송하므로,
+      candidate(정책 적용)보다 CPU 사용량이 높을 것으로 예상한다. 정량 PASS
+      기준은 사전 확정하지 않는다.
+
+bench_stack:
+  alpha_test_account: true
+  beta_dual_slots: true
+  gamma_sentinel: false
+  delta_autoscaler: false
+
+context:
+  purpose: >
+    대기 큐 SSE 갱신 정책을 적용했을 때, 1300명 동시 대기 상태에서 서버의
+    per-client 계산/전송 부담을 줄여 CPU와 이벤트 루프 부담을 낮출 수 있는지
+    확인한다.
+  comparison_axis: "대기 큐 SSE 갱신 정책 적용 여부"
+  decision_question: >
+    대기 큐 전원이 입장하지 않고 2분 동안 대기하는 조건에서, candidate의 공통
+    브로드캐스트 정책이 baseline의 개별 계산/전송 방식보다 서버 리소스 사용을
+    의미 있게 낮추는가?
+  interpretation_focus:
+    - "node_cpu mean/max by slot"
+    - "event_loop_lag and gc_duration during SSE hold"
+    - "http_error_rate and SSE connection stability"
+    - "whether resource differences are explained by the queue policy rather than stack or load drift"
+  controls:
+    - "baseline/candidate CPU, memory, deploy, update 방식은 대칭으로 유지한다"
+    - "두 슬롯 모두 동일한 event_id, 테스트 계정 풀, 1300명 클라이언트 수, ramp-up, hold 시간을 사용한다"
+    - "입장 가능 전환은 발생시키지 않고 전원 대기 상태를 유지한다"
+    - "PlanConfig/Plan.json 기반 좌석 예매 부하는 사용하지 않는다"
+  slot_descriptions:
+    baseline: >
+      정책 미적용. 서버가 각 SSE 클라이언트마다 userOrder, totalWaiting,
+      restMilisecond, enteringStatus를 개별 계산해 전송한다.
+    candidate: >
+      정책 적용. 서버는 공통 headOrder, totalWaiting, throughputRate만
+      브로드캐스트하고 클라이언트가 자신의 남은 순서를 계산한다.
+  region_flow:
+    - step: "사전 로그인 상태"
+    - step: "입장 권한 확인"
+      ramp_up: "10s"
+    - wait: "20s"
+    - step: "대기열 SSE 구독"
+      ramp_up: "10s"
+    - hold: "2m"
+    - step: "연결 해제"
+  load_model:
+    scenario_family: "waiting_queue_sse"
+    concurrent_clients: 1300
+    permission_ramp_up: "10s"
+    pre_subscription_wait: "20s"
+    subscription_ramp_up: "10s"
+    hold: "2m"
+    entering_policy: "none; all clients stay waiting"
+  plan_config:
+    used: false
+    reason: "PARALLEL/booking PlanGenerator 기반 실험이 아니라 waiting queue SSE 전용 실험"
+    compatibility_note: >
+      plan_path는 현재 manifest schema의 required field라 관례 경로를 유지한다.
+      실행 전 구현에서 run.sh timing과 Gatling invocation이 Plan.json 없이
+      waiting queue hold/ramp-up 기준으로 동작하도록 조정되어야 한다.
+
+implementation_plan:
+  status: "completed"
+  gatling:
+    branch: "bench/waiting-queue-policy"
+    base: "main"
+    local_only: true
+    research_summary: >
+      local main 기준 기본 4종 모드(DYNAMIC/STATIC/PARALLEL/LOGIN_ONLY)만으로는
+      대기열 권한 확인 후 SSE 구독 전에 20초 대기, 1300명 SSE 구독 10초 ramp-up, 2분 hold,
+      전원 대기 유지 시나리오를 표현할 수 없다. PlanConfig/Plan.json 기반 예매
+      부하도 사용하지 않으므로 waiting queue 전용 custom scenario와 orchestration
+      인자 전달이 필요하다.
+    repo_state:
+      current_branch: "bench/waiting-queue-policy"
+      dirty: true
+      local_main_latest: "25cb978 2026-05-12 fix(build): Gatling -P 설정 주입 지원"
+      implementation_commit: "e67d74c 2026-05-12 feat: 대기열 SSE 전용 시나리오 추가"
+      protected_existing_changes:
+        - "untracked local files exist in the Gatling repo; do not clean them unless explicitly requested"
+    scenario_decisions:
+      - slot: "baseline"
+        mode: "WAITING_QUEUE"
+        custom_required: true
+        rationale: "WAITING_QUEUE 전용 SSE flow가 필요하며, scenario_mode 값은 구현 세션에서 확정 후 manifest에 기록한다."
+      - slot: "candidate"
+        mode: "WAITING_QUEUE"
+        custom_required: true
+        rationale: "동일 Gatling flow로 candidate 서버 정책만 비교해야 하므로 baseline과 같은 custom mode를 사용한다."
+    change_plan:
+      - id: "G1"
+        file: "app/src/gatling/java/simulations/config/Config.java"
+        intent: >
+          waiting queue 전용 scenario mode와 설정값을 추가한다. 필요한 값:
+          waitingQueueUserCount=1300, permissionRampUp=10s, subscriptionRampUp=10s,
+          preSubscriptionWait=20s(권한 확인 완료 후, SSE 구독 시작 전), waitingQueueHold=2m.
+        base_code_path: "Config.java ScenarioMode + existing waiting/static wait constants"
+        preserve:
+          - "existing DYNAMIC/STATIC/PARALLEL behavior"
+          - "-P property whitelist compatibility"
+        done: true
+      - id: "G2"
+        file: "app/build.gradle"
+        intent: "waiting queue 전용 -P 키들을 benchPropertyKeys/propagation 목록에 추가한다."
+        base_code_path: "existing benchPropertyKeys list"
+        preserve:
+          - "existing scenarioMode/targetUrl/targetEvent propagation"
+        done: true
+      - id: "G3"
+        file: "app/src/gatling/java/simulations/booking/scenario/WaitingQueueScenario.java"
+        intent: >
+          사전 로그인 계정으로 권한 확인을 10초 ramp-up으로 수행하고, 권한 확인
+          완료 후 SSE 구독을 시작하기 전에 20초 대기한다. 그 다음 SSE 구독을
+          10초 ramp-up으로 진입시킨 뒤 2분 유지하고 연결을 해제한다.
+          입장 가능 전환이나 booking/Plan 액션은 수행하지 않는다.
+        base_code_path: "DynamicScenario/ParallelScenario injection patterns + SseHandler"
+        preserve:
+          - "stored test account handling"
+          - "request names useful for Gatling report parsing"
+        done: true
+      - id: "G4"
+        file: "areas/04-gatling-integration/lib/gatling.sh"
+        intent: >
+          run_gatling 호출에 waiting queue 전용 -P 값을 전달하거나, manifest context/load_model
+          값을 슬롯별 환경으로 주입하는 경로를 추가한다.
+        base_code_path: "run_gatling -PscenarioMode/-PtargetUrl/-PtargetEvent path"
+        preserve:
+          - "existing PARALLEL/Plan based benchmark behavior"
+        done: true
+      - id: "G5"
+        file: "bench/manifests/waiting-queue-policy.yaml"
+        intent: >
+          custom mode 이름이 확정되면 slots[].scenario_mode를 baseline/candidate에 동일하게
+          기록하고 implementation_plan.gatling.status를 갱신한다.
+        base_code_path: "this manifest"
+        preserve:
+          - "scenario_mode provenance rule"
+        done: true
+    acceptance_checks:
+      - "Gatling EFFECTIVE_CONFIG 또는 동등 로그에 scenarioMode, targetUrl, targetEvent, waitingQueueUserCount=1300, hold=120000ms 반영 확인"
+      - "권한 확인 ramp-up 10s 이후, SSE 구독 시작 전 20s wait가 먼저 발생하고, 그 다음 SSE 구독 ramp-up 10s와 2m hold가 Gatling report/log에서 확인될 것"
+      - "Plan.json 없이 waiting queue scenario가 실행될 것"
+      - "baseline/candidate 모두 같은 Gatling scenario를 사용하고 targetUrl만 8080/8081로 분리될 것"
+    risks:
+      - "현재 run.sh timing 경로는 Plan.json stats.simulation_duration_ms를 요구하므로 waiting queue 전용 timing 경로가 필요하다"
+      - "화이트리스트 밖 -P 키는 silent no-op이므로 app/build.gradle과 run_gatling 양쪽 반영이 필요하다"
+      - "SSE 구독 1300명은 VM/Redis/Nest connection limit에 영향을 받을 수 있다"
+  realticket:
+    meta_branch: "bench/waiting-queue-policy/meta"
+    slot_branches:
+      - slot: "baseline"
+        branch: "bench/waiting-queue-policy/baseline"
+        base: "origin/bench/individual-waiting-sse"
+        rationale: "정책 미적용 서버 개별 계산/전송 구현을 baseline으로 사용"
+      - slot: "candidate"
+        branch: "bench/waiting-queue-policy/candidate"
+        base: "bench/existing-waiting-sse"
+        rationale: "정책 적용 서버 공통 브로드캐스트 구현을 candidate로 사용"
+    tasks:
+      - id: "R1"
+        target: "candidate slot branch"
+        what: "bench/existing-waiting-sse를 기점으로 candidate 슬롯 브랜치 생성"
+        done: true
+      - id: "R2"
+        target: "meta branch"
+        what: "alpha=true, beta=true, gamma=false, delta=false 조합의 bench-stack/waiting-queue-policy.yml 생성"
+        done: true
+      - id: "R3"
+        target: "baseline/candidate branches"
+        what: "Prometheus scrape interval과 nest service DNS target을 슬롯 구성에 맞게 유지"
+        done: true
+  git:
+    tasks:
+      - id: "GIT1"
+        what: "Gatling bench/waiting-queue-policy 구현 local commit"
+        done: true
+      - id: "GIT2"
+        what: "RealTicket bench/waiting-queue-policy/meta, baseline, candidate commit/push"
+        done: true
+      - id: "GIT3"
+        what: "VM에서 nest:waiting-queue-policy-baseline / nest:waiting-queue-policy-candidate 이미지 빌드 후 stack deploy"
+        done: true
+
+workflow_state:
+  status: "ready_to_run"
+  active_area: "02-orchestration"
+  current_task_ref: "run.sh preflight"
+  last_completed: "Waiting queue pre-subscription wait changed from 50s to 20s in manifest"
+  next_action: "Run BENCH_PREFLIGHT_ONLY=1 before starting the 3h benchmark"
+  updated_at: "2026-05-12T17:31:00+09:00"
+  handoff_notes:
+    - "Do not start the 3h benchmark without an explicit run request."
+    - "This is a waiting queue SSE benchmark, not a PARALLEL/PlanGenerator booking benchmark."
+    - "Baseline RealTicket source is origin/bench/individual-waiting-sse; candidate RealTicket source is bench/existing-waiting-sse."

@@ -16,6 +16,12 @@ run_gatling() {
   local user_count="${SLOT_USER_COUNT[$slot_idx]:-200}"
   local booking_amount="${SLOT_BOOKING_AMOUNT[$slot_idx]:-4}"
   local max_retry="${SLOT_MAX_RETRY[$slot_idx]:-100}"
+  local test_account_already_stored="${BENCH_TEST_ACCOUNT_ALREADY_STORED:-false}"
+  local waiting_queue_user_count="${WAITING_QUEUE_USER_COUNT:-1300}"
+  local waiting_queue_permission_ramp_ms="${WAITING_QUEUE_PERMISSION_RAMP_MILLIS:-10000}"
+  local waiting_queue_pre_subscription_wait_ms="${WAITING_QUEUE_PRE_SUBSCRIPTION_WAIT_MILLIS:-50000}"
+  local waiting_queue_subscription_ramp_ms="${WAITING_QUEUE_SUBSCRIPTION_RAMP_MILLIS:-10000}"
+  local waiting_queue_hold_ms="${WAITING_QUEUE_HOLD_MILLIS:-120000}"
 
   # cd + ./gradlew 패턴 (04 contract 라인 160-169 — working dir 외부 repo 루트로)
   (cd "$GATLING_DIR" && \
@@ -27,6 +33,12 @@ run_gatling() {
       -PdynamicUserCount="$user_count" \
       -PfixedBookingAmount="$booking_amount" \
       -PmaxRetryInBookingConflict="$max_retry" \
+      -PtestAccountAlreadyStored="$test_account_already_stored" \
+      -PwaitingQueueUserCount="$waiting_queue_user_count" \
+      -PwaitingQueuePermissionRampMillis="$waiting_queue_permission_ramp_ms" \
+      -PwaitingQueuePreSubscriptionWaitMillis="$waiting_queue_pre_subscription_wait_ms" \
+      -PwaitingQueueSubscriptionRampMillis="$waiting_queue_subscription_ramp_ms" \
+      -PwaitingQueueHoldMillis="$waiting_queue_hold_ms" \
       -PplanPath="$plan_path") || return 1
 
   # archive 의 latest 결과를 iter_dir 로 복사 (04 contract 라인 174-181)
@@ -66,8 +78,12 @@ run_gatling() {
   # Plan.json 도 iter_dir 에 복사 — prom_query.py 가
   # iter_dir/Plan.json 을 region 슬라이싱 입력으로 사용. 미복사 시 매번
   # 'Plan.json not found' 에러 반환.
-  cp -f "$GATLING_DIR/$plan_path" "$iter_dir/Plan.json" 2>/dev/null \
-    || log WARN "run_gatling: plan_path file not found at $GATLING_DIR/$plan_path"
+  if [[ "${WAITING_QUEUE_NO_PLAN:-0}" == "1" ]]; then
+    log INFO "run_gatling: Plan.json copy skipped for no-plan waiting queue scenario"
+  else
+    cp -f "$GATLING_DIR/$plan_path" "$iter_dir/Plan.json" 2>/dev/null \
+      || log WARN "run_gatling: plan_path file not found at $GATLING_DIR/$plan_path"
+  fi
   log INFO "run_gatling: completed slot=$slot_idx → $iter_dir"
 }
 

@@ -7,6 +7,17 @@
 # 인자: <manifest_id>
 prepare_gatling_branch() {
   local manifest_id="$1"
+  local base_ref="${GATLING_BASE_REF:-origin/main}"
+  if [[ "${GATLING_LOCAL_ONLY:-0}" == "1" ]]; then
+    if git -C "$GATLING_DIR" show-ref --verify --quiet "refs/heads/bench/$manifest_id"; then
+      git -C "$GATLING_DIR" checkout "bench/$manifest_id"
+    else
+      git -C "$GATLING_DIR" checkout -b "bench/$manifest_id" "$base_ref"
+    fi
+    log INFO "prepare_gatling_branch: local-only gatling bench/$manifest_id (base=$base_ref, push skipped)"
+    return 0
+  fi
+
   git -C "$GATLING_DIR" fetch origin
   if git -C "$GATLING_DIR" show-ref --verify --quiet "refs/heads/bench/$manifest_id"; then
     git -C "$GATLING_DIR" checkout "bench/$manifest_id"
