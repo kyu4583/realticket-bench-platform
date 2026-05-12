@@ -20,11 +20,12 @@
 
 ### `prom_query.py`
 
-- **입력:** 매니페스트의 `queries[]` + `prom_url`·`prom_step` + `iter_meta.json` (`iter_start_epoch` + `iter_end_epoch` 또는 `per_run_ms`) + run_dir 의 `phases.json` (선택)
-- **출력:** `iter-N-<slot>/prom_metrics.json` — 구조: `{query_name: {phase_name: {mean, max, count}}}`. `_iter_total` 윈도우는 항상 포함, phase별 윈도우는 `phases.json` 가 있을 때만
+- **입력:** 매니페스트의 `queries[]` + `prom_url`·`prom_step` + `iter_meta.json` (`iter_start_epoch` + `iter_end_epoch` 또는 `per_run_ms`) + run_dir 의 `phases.json` (선택) + iter_dir 의 `phase_markers.jsonl` (선택)
+- **출력:** `iter-N-<slot>/prom_metrics.json` — 구조: `{query_name: {phase_name: {mean, max, count}}}`. `_iter_total` 윈도우는 항상 포함, phase별 윈도우는 `phases.json` 또는 `phase_markers.jsonl` 도출이 가능할 때 포함
 - **단독 CLI:** `python areas/03-analysis/analyze/prom_query.py --manifest bench/manifests/<manifest>.yaml --iter bench/results/<manifest_id>/<run_id>/iter-1-baseline`
 - **책임 경계:** Prometheus HTTP API 호출만. iter 전체 윈도우 = `[iter_start_epoch, iter_end_epoch]` (실측 우선) 또는 `[iter_start, iter_start+per_run_ms/1000]` (도출 fallback). phase 윈도우 = `[start_ms, end_ms)` (start inclusive, end exclusive)
 - **iter timing 메타:** orchestration 이 분석 region 용 `per_run_ms`/`main_booking_ms` 를 `iter_meta.json` 에 기록한다. `per_run_ms` 는 `iter_end_epoch` 가 없을 때만 iter window fallback 으로 쓰고, 정상 결과는 `iter_end_epoch` 실측을 우선한다. duration mode 의 wall-clock 값(`estimated_iter_s`, `measured_iter_s`)은 실행 제어와 추적용 메타이며 Prometheus phase slicing 에 직접 사용하지 않는다.
+- **phase 경계 우선순위:** `phases.json` → `phase_markers.jsonl` wait 중간 유저 marker. 둘 다 없거나 marker 매칭에 실패하면 phase별 슬라이스는 만들지 않는다.
 - **phases.json 스키마**: [00-contracts/README.md § phases.json 스키마](../00-contracts/README.md) 참조
 
 ### `summarize.py`
@@ -58,6 +59,7 @@
 | 세부 집계 (요청별) | `iter-N-<slot>/stats.json` (request_name 키) |
 | 세부 집계 (Prometheus phase 슬라이스) | `iter-N-<slot>/prom_metrics.json` |
 | 시뮬레이션 단계 정의 | `<run_dir>/phases.json` |
+| Gatling wait 진입 marker | `iter-N-<slot>/phase_markers.jsonl` |
 | per-request 분석 | `iter-N-<slot>/raw_requests.jsonl` (1줄 = 1 요청) |
 | Prometheus 시계열 | `iter-N-<slot>/prometheus_<query>.csv` |
 

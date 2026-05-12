@@ -213,6 +213,25 @@ def _ordered_phase_names(slot_phase_query: dict[str, dict[str, dict[str, dict[st
     return ordered
 
 
+def _manual_stop_note(run_p: Path) -> str:
+    progress_p = run_p / "progress.json"
+    if not progress_p.exists():
+        return ""
+    try:
+        with progress_p.open("r", encoding="utf-8-sig") as f:
+            progress = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    stop_after = progress.get("manual_stop_after_iter")
+    discarded = progress.get("discarded_iter")
+    if stop_after is None:
+        return ""
+    if discarded is None:
+        return f"Manual stop: this summary uses iter 1-{stop_after} only."
+    return f"Manual stop: iter {discarded} was interrupted and discarded; this summary uses iter 1-{stop_after} only."
+
+
 def _build_gatling_phase_tables(
     slot_reqtype: dict[str, dict[str, dict[str, list[float]]]],
     phase_names: list[str],
@@ -376,8 +395,11 @@ def summarize_run(run_dir: str) -> str:
         "",
         f"- Run dir: `{run_dir}`",
         f"- Iter dirs: {len(iter_dirs)}",
-        "",
     ]
+    manual_stop_note = _manual_stop_note(run_p)
+    if manual_stop_note:
+        lines.append(f"- {manual_stop_note}")
+    lines.append("")
 
     phase_names = _ordered_phase_names(slot_phase_query)
     lines.extend(_build_gatling_phase_tables(slot_reqtype, phase_names))

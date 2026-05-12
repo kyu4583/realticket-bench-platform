@@ -22,6 +22,13 @@ run_gatling() {
   local waiting_queue_pre_subscription_wait_ms="${WAITING_QUEUE_PRE_SUBSCRIPTION_WAIT_MILLIS:-50000}"
   local waiting_queue_subscription_ramp_ms="${WAITING_QUEUE_SUBSCRIPTION_RAMP_MILLIS:-10000}"
   local waiting_queue_hold_ms="${WAITING_QUEUE_HOLD_MILLIS:-120000}"
+  local phase_marker_path="$iter_dir/phase_markers.jsonl"
+  local phase_marker_arg="$phase_marker_path"
+
+  rm -f "$phase_marker_path" 2>/dev/null || true
+  if command -v cygpath >/dev/null 2>&1; then
+    phase_marker_arg="$(cygpath -w "$phase_marker_path")"
+  fi
 
   # cd + ./gradlew 패턴 (04 contract 라인 160-169 — working dir 외부 repo 루트로)
   (cd "$GATLING_DIR" && \
@@ -39,6 +46,7 @@ run_gatling() {
       -PwaitingQueuePreSubscriptionWaitMillis="$waiting_queue_pre_subscription_wait_ms" \
       -PwaitingQueueSubscriptionRampMillis="$waiting_queue_subscription_ramp_ms" \
       -PwaitingQueueHoldMillis="$waiting_queue_hold_ms" \
+      -PphaseMarkerPath="$phase_marker_arg" \
       -PplanPath="$plan_path") || return 1
 
   # archive 의 latest 결과를 iter_dir 로 복사 (04 contract 라인 174-181)

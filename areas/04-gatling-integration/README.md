@@ -19,7 +19,7 @@
 
 ---
 
-## -P 키 표 (8개)
+## -P 키 표 (9개)
 
 > 출처: 외부 repo `app/build.gradle` `benchPropertyKeys` 화이트리스트 + `Config.java` parseEnum/parseString/parseInt 호출.
 > 화이트리스트에 없는 -P 키는 silent no-op — 가장 흔한 함정.
@@ -34,6 +34,7 @@
 | 6 | `dynamicUserCount` | int | `200` | DYNAMIC 모드의 동시 사용자 수 |
 | 7 | `fixedBookingAmount` | int | `4` (음수면 랜덤) | 1 사용자가 시도하는 좌석 수 |
 | 8 | `maxRetryInBookingConflict` | int | `100` | booking 충돌 재시도 횟수 상한 |
+| 9 | `phaseMarkerPath` | string (path) | empty | Gatling wait 진입 marker JSONL 출력 경로. 비어 있으면 콘솔 로그만 사용 |
 
 > **검증:** 시뮬레이션 시작 시 콘솔에 `=== Bench -P injection ===` + `EFFECTIVE_CONFIG {...}` 1줄 출력. 누락 시 시뮬레이션 미시작 의심.
 >
@@ -178,7 +179,7 @@ PlanConfig는 매니페스트 schema의 core field가 아니지만, PlanGenerato
 region 구성과 단계 간 대기가 결정되면 분석 측도 같은 단계 경계로 Prometheus 메트릭을 슬라이싱한다.
 **책임 분담:**
 - 02-orchestration 가 매니페스트의 region 결정 + Config 스냅샷에서 `phases.json` (run_dir 1개) 을 derive 작성
-- 03-analysis `prom_query.py` 가 `phases.json` 을 읽어 phase 별 `prom_metrics.json` 생성
+- 03-analysis `prom_query.py` 가 `phases.json` 을 읽어 phase 별 `prom_metrics.json` 생성. `phases.json` 이 없으면 iter_dir 의 `phase_markers.jsonl` 에서 wait 중간 유저 marker를 사용한다. marker 매칭에 실패하면 phase별 슬라이스는 만들지 않는다.
 - 03-analysis `summarize.py` 가 SUMMARY.md 에 slot × phase × query 표 출력
 
 phases.json 스키마는 [00-contracts § phases.json 스키마](../00-contracts/README.md) 참조.

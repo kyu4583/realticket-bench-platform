@@ -160,12 +160,13 @@ iteration = 매니페스트 내 N번째 반복 회차       # 1..N (iterations �
 bench/results/<manifest_id>/<run_id>/               # ex: bench/results/dry-run-001/dry-run-001-20260502-000552/
 ├── RUNNING | COMPLETED | FAILED                # 마커 1개. 종료 상태 단일 진실
 ├── progress.json                                # 6 필드: current_iter·total_iter·phase·started_at·updated_at·eta
-├── phases.json                                  # 시뮬레이션 단계(region) 정의 — run 단위 1개. 부재 시 prom_query 는 _iter_total 만 슬라이싱
+├── phases.json                                  # 시뮬레이션 단계(region) 정의 — run 단위 1개. 부재 시 prom_query 는 marker로만 도출
 ├── iter-1-baseline/                             # iteration 1 / slot baseline
 │   ├── simulation.log                           # Gatling 출력
 │   ├── gatling-report/                          # Gatling HTML 결과 보고서 (app/build/reports/gatling 최신 디렉토리 복사본)
 │   ├── gatling-report-source.txt                # 원본 Gatling report 디렉토리 경로
 │   ├── iter_meta.json                           # iter_start_epoch · slot · iter 등
+│   ├── phase_markers.jsonl                      # 선택: Gatling wait 진입 marker. wait 중간 유저 기반 phase 경계 도출에 사용
 │   ├── stats.json                               # parse_simulation_log.py 출력 (request_name 별 집계)
 │   ├── raw_requests.jsonl                       # per-request 1줄 JSON (request_name·status·response_time_ms·timestamp_epoch·source)
 │   └── prom_metrics.json                        # prom_query.py 출력 (query × phase 슬라이스 — _iter_total + phase별)
@@ -210,7 +211,7 @@ iter 단위 메타. 02-orchestration 의 `write_iter_meta` 가 작성, 03-analys
 ## phases.json 스키마
 
 매니페스트 시나리오의 **시뮬레이션 단계(region)** 정의. run_dir 1개당 1 파일 — 모든 iter 가 공유한다.
-phases.json 부재 시 `prom_query.py` 는 `_iter_total` 윈도우만 집계 (단계 슬라이싱 미적용 — 하위 호환).
+phases.json 부재 시 `prom_query.py` 는 iter_dir 의 `phase_markers.jsonl` 로만 phase 경계를 도출한다. marker가 없거나 매칭할 수 없으면 phase별 슬라이스는 만들지 않고 `_iter_total` 만 집계한다.
 
 ```json
 {

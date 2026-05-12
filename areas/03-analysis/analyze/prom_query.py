@@ -2,7 +2,7 @@
 """prom_query.py — Prometheus query_range, phase-aware 슬라이싱.
 
 phases.json (run_dir 1개) 가 정의된 단계별로 metric 윈도우를 분리한다.
-phases.json 부재 시 _iter_total 윈도우만 집계 (단계 슬라이싱 미적용).
+phases.json 부재 시 phase_markers.jsonl 의 wait marker로 phase 경계를 도출한다.
 
 iter 윈도우는 iter_meta.json 의 iter_start_epoch + (iter_end_epoch | per_run_ms) 로 결정.
 매니페스트의 per_run 필드는 더 이상 사용하지 않음 (per_run_ms 는 02-orchestration 이 Plan.json
@@ -30,10 +30,6 @@ def _parse_wait_ms(s: str) -> int:
     if s.endswith("s"):
         return int(s[:-1]) * 1_000
     return int(s) * 1_000  # bare number → seconds
-
-
-_IDLE_THRESHOLD_RATIO = 0.15   # max의 15% 미만 = idle
-_WAIT_MATCH_MIN_RATIO = 0.70   # 감지된 idle 구간이 예상 wait의 70% 이상이어야 매칭
 
 
 def _parse_region_flow_structure(
@@ -68,121 +64,78 @@ def _parse_region_flow_structure(
     return groups, waits
 
 
-def _cpu_phase_boundaries(
-    cpu_path: Path,
+def _marker_phase_boundaries(
+    marker_path: Path,
     groups: list[list[str]],
     waits: list[int],
     iter_start: int,
     iter_end: int,
-    slot: str,
 ) -> list[dict] | None:
-    """prom_node_cpu.json (cAdvisor)에서 phase 경계를 감지한다.
+    """phase_markers.jsonl 의 wait_enter marker에서 phase 경계를 도출한다.
 
-    wait 구간에서 활성 컨테이너 CPU가 급락하는 패턴을 이용.
-    idle 구간을 찾아 region_flow의 wait와 매칭한다.
-
-    감지 실패(데이터 부족·매칭 불가) 시 None 반환 → 호출자가 휴리스틱으로 폴백.
+    각 wait marker 그룹에서 entryOrder 기준 중간 유저를 고르고,
+    그 유저의 wait 진입 시각 + waitMs/2 를 phase 경계로 삼는다.
     """
-    if not groups or not waits or len(groups) != len(waits) + 1:
+    if not groups or not waits or len(groups) != len(waits) + 1 or not marker_path.exists():
         return None
+
+    marker_groups: dict[str, list[tuple[int, int, int]]] = {}
+    marker_names: list[str] = []
     try:
-        raw = cpu_path.read_text(encoding="utf-8").strip()
-        if raw == "-":
-            return None
-        prom = json.loads(raw)
-    except Exception:
+        with marker_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    marker = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if marker.get("type") != "wait_enter":
+                    continue
+                name = str(marker.get("name") or "")
+                if not name:
+                    continue
+                try:
+                    entry_order = int(marker.get("entryOrder"))
+                    epoch_ms = int(marker.get("epochMs"))
+                    wait_ms = int(marker.get("waitMs"))
+                except (TypeError, ValueError):
+                    continue
+                if wait_ms <= 0:
+                    continue
+                if name not in marker_groups:
+                    marker_groups[name] = []
+                    marker_names.append(name)
+                marker_groups[name].append((entry_order, epoch_ms, wait_ms))
+    except OSError:
         return None
 
-    # 활성 슬롯 컨테이너만 집계 (name 레이블에 "nest-<slot>" 포함)
-    by_ts: dict[int, float] = {}
-    for series in prom.get("data", {}).get("result", []):
-        name_label = series.get("metric", {}).get("name", "") or ""
-        if f"nest-{slot}" not in name_label:
-            continue
-        for ts_str, val_str in series.get("values", []):
-            try:
-                ts = int(ts_str)
-                by_ts[ts] = by_ts.get(ts, 0.0) + float(val_str)
-            except (ValueError, TypeError):
-                pass
-
-    if len(by_ts) < 6:   # 포인트 너무 적으면 신뢰 불가
+    if len(marker_names) < len(waits):
         return None
 
-    pts = sorted(by_ts.items())
-    max_val = max(v for _, v in pts)
-    if max_val <= 0:
-        return None
-    threshold = max_val * _IDLE_THRESHOLD_RATIO
-
-    # idle 구간 추출: (start_epoch, end_epoch)
-    idle_windows: list[tuple[int, int]] = []
-    in_idle = pts[0][1] < threshold
-    win_start = pts[0][0]
-    prev_ts = pts[0][0]
-    for ts, v in pts[1:]:
-        now_idle = v < threshold
-        if now_idle != in_idle:
-            if in_idle:
-                idle_windows.append((win_start, prev_ts))
-            in_idle = now_idle
-            win_start = ts
-        prev_ts = ts
-    if in_idle:
-        idle_windows.append((win_start, prev_ts))
-
-    # idle 구간을 wait과 시간 순으로 매칭
     boundaries: list[int] = []
     search_from = 0
     for wait_ms in waits:
-        min_dur_s = (wait_ms * _WAIT_MATCH_MIN_RATIO) / 1000
-        best_i, best_diff = None, float("inf")
-        for i in range(search_from, len(idle_windows)):
-            ws, we = idle_windows[i]
-            dur_s = we - ws
-            if dur_s >= min_dur_s:
-                diff = abs(dur_s - wait_ms / 1000)
-                if diff < best_diff:
-                    best_diff = diff
-                    best_i = i
-        if best_i is None:
+        chosen_events: list[tuple[int, int, int]] | None = None
+        for i in range(search_from, len(marker_names)):
+            events = sorted(marker_groups[marker_names[i]], key=lambda e: (e[0], e[1]))
+            median_wait_ms = events[(len(events) - 1) // 2][2]
+            tolerance_ms = max(1000, int(wait_ms * 0.2))
+            if abs(median_wait_ms - wait_ms) <= tolerance_ms:
+                chosen_events = events
+                search_from = i + 1
+                break
+        if chosen_events is None:
             return None
-        search_from = best_i + 1
-        boundaries.append(idle_windows[best_i][1])  # idle 구간 오른쪽 끝 = phase 경계
 
-    phases: list[dict] = []
-    for i, group_steps in enumerate(groups):
-        s_epoch = iter_start if i == 0 else boundaries[i - 1]
-        e_epoch = iter_end   if i == len(groups) - 1 else boundaries[i]
-        phases.append({
-            "name": " + ".join(group_steps),
-            "start_ms": (s_epoch - iter_start) * 1000,
-            "end_ms":   (e_epoch - iter_start) * 1000,
-        })
-    return phases
-
-
-def _region_flow_to_phases(
-    region_flow: object,
-    per_run_ms: int,
-    iter_start: int,
-    iter_end: int,
-) -> list[dict]:
-    """region_flow → phases list (휴리스틱 폴백).
-
-    iter_end - per_run_ms 를 기준으로 역산해 wait 중간점을 phase 경계로 삼는다.
-    CPU 감지(_cpu_phase_boundaries)가 실패했을 때만 호출된다.
-    """
-    groups, waits = _parse_region_flow_structure(region_flow)
-    if not groups:
-        return []
-
-    cursor = iter_end - per_run_ms // 1000
-    boundaries: list[int] = []
-    for wait_ms in reversed(waits):
-        mid = cursor - wait_ms // 2000
-        boundaries.insert(0, mid)
-        cursor -= wait_ms // 1000
+        _, epoch_ms, marker_wait_ms = chosen_events[(len(chosen_events) - 1) // 2]
+        boundary_epoch = int((epoch_ms + marker_wait_ms / 2) / 1000)
+        if not (iter_start < boundary_epoch < iter_end):
+            return None
+        if boundaries and boundary_epoch <= boundaries[-1]:
+            return None
+        boundaries.append(boundary_epoch)
 
     phases: list[dict] = []
     for i, group_steps in enumerate(groups):
@@ -223,13 +176,44 @@ def _load_phases(iter_dir: Path) -> list[dict]:
     return []
 
 
+def _series_matches_slot(series: dict, slot: str | None) -> bool:
+    if not slot:
+        return False
+    slot = slot.strip().lower()
+    if not slot:
+        return False
+    metric = series.get("metric", {})
+    if not isinstance(metric, dict):
+        return False
+
+    # RealTicket slot labels appear as e.g. nest-baseline, realticket_nest-baseline,
+    # or realticket_nest-baseline.1.<task>. Keep the match tied to the slot suffix
+    # to avoid accidentally matching unrelated label text.
+    needles = (f"nest-{slot}", f"nest_{slot}", f"-{slot}", f"_{slot}")
+    for value in metric.values():
+        text = str(value).lower()
+        if any(needle in text for needle in needles):
+            return True
+    return False
+
+
+def _series_for_slot(resp: dict, slot: str | None) -> list[dict]:
+    series = resp.get("data", {}).get("result", [])
+    if not isinstance(series, list):
+        return []
+    if not slot:
+        return series
+    matching = [s for s in series if _series_matches_slot(s, slot)]
+    return matching if matching else series
+
+
 def _slice_window(resp: dict, start_epoch: int, end_epoch: int,
-                   end_inclusive: bool = True) -> dict:
+                   end_inclusive: bool = True, slot: str | None = None) -> dict:
     """Prometheus 응답에서 [start_epoch, end_epoch] (또는 end exclusive) 윈도우 집계."""
     if resp.get("status") != "success":
         return {"mean": None, "max": None, "count": 0, "error": "prom status != success"}
     values: list[float] = []
-    for series in resp.get("data", {}).get("result", []):
+    for series in _series_for_slot(resp, slot):
         for ts_str, val_str in series.get("values", []):
             try:
                 ts = int(ts_str)
@@ -264,7 +248,7 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
         },
         ...
       }
-    phases.json 부재 시 _iter_total 만 포함.
+    phases.json 부재 시 phase_markers.jsonl 로 phase를 도출한다.
     출력은 {iter_dir}/prom_metrics.json 에 atomic write.
 
     offline_response: self-test 모드 — Prometheus HTTP 호출 없이 fixture json 사용.
@@ -290,6 +274,8 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
         iter_meta = json.load(f)
 
     iter_start = iter_meta["iter_start_epoch"]
+    iter_dir_parts = iter_dir_p.name.split("-", 2)
+    iter_slot = str(iter_meta.get("slot") or (iter_dir_parts[2] if len(iter_dir_parts) >= 3 else ""))
     # iter_end 우선순위: iter_end_epoch (실측) → iter_start + per_run_ms/1000 (도출)
     if "iter_end_epoch" in iter_meta:
         iter_end = iter_meta["iter_end_epoch"]
@@ -303,19 +289,15 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
     else:
         phases = _load_phases(iter_dir_p)
 
-    # phases.json 없으면 region_flow → CPU 감지 우선, 폴백은 휴리스틱
+    # phases.json 없으면 region_flow 구조와 wait marker를 매칭해 phase 경계를 도출한다.
     if not phases:
         region_flow = (manifest.get("context") or {}).get("region_flow") or []
         if region_flow:
             groups, waits = _parse_region_flow_structure(region_flow)
-            slot = iter_meta.get("slot", "")
-            phases = _cpu_phase_boundaries(
-                iter_dir_p / "prom_node_cpu.json",
-                groups, waits, iter_start, iter_end, slot,
-            )
-            if phases is None:
-                per_run_ms = iter_meta.get("per_run_ms") or 0
-                phases = _region_flow_to_phases(region_flow, per_run_ms, iter_start, iter_end)
+            phases = _marker_phase_boundaries(
+                iter_dir_p / "phase_markers.jsonl",
+                groups, waits, iter_start, iter_end,
+            ) or []
 
     out: dict[str, Any] = {}
     for q in queries:
@@ -338,7 +320,7 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
                 continue
 
         per_phase: dict[str, Any] = {
-            "_iter_total": _slice_window(resp, iter_start, iter_end, end_inclusive=True)
+            "_iter_total": _slice_window(resp, iter_start, iter_end, end_inclusive=True, slot=iter_slot)
         }
         for ph in phases:
             try:
@@ -347,7 +329,7 @@ def query_iter_metrics(iter_dir: str, manifest_path: str,
                 ph_end = iter_start + int(ph["end_ms"]) // 1000
             except (KeyError, TypeError, ValueError) as e:
                 continue
-            per_phase[ph_name] = _slice_window(resp, ph_start, ph_end, end_inclusive=False)
+            per_phase[ph_name] = _slice_window(resp, ph_start, ph_end, end_inclusive=False, slot=iter_slot)
 
         out[q_name] = per_phase
 
@@ -423,6 +405,49 @@ def _selftest() -> int:
     if missing:
         print(f"FAIL: phase 슬라이싱 누락: {missing}", file=sys.stderr)
         return 1
+    marker_dir = run_dir / "iter-marker-baseline"
+    marker_dir.mkdir(exist_ok=True)
+    marker_path = marker_dir / "phase_markers.jsonl"
+    marker_lines = [
+        {"type": "wait_enter", "name": "test_wait", "entryOrder": 1, "userNum": 1, "epochMs": 1777663810000, "waitMs": 20000},
+        {"type": "wait_enter", "name": "test_wait", "entryOrder": 2, "userNum": 2, "epochMs": 1777663820000, "waitMs": 20000},
+        {"type": "wait_enter", "name": "test_wait", "entryOrder": 3, "userNum": 3, "epochMs": 1777663830000, "waitMs": 20000},
+    ]
+    marker_path.write_text("\n".join(json.dumps(line) for line in marker_lines) + "\n", encoding="utf-8")
+    marker_phases = _marker_phase_boundaries(
+        marker_path,
+        [["auth_check"], ["subscribe"]],
+        [20000],
+        1777663801,
+        1777663861,
+    )
+    if not marker_phases or marker_phases[0].get("end_ms") != 29000:
+        print(f"FAIL: marker phase boundary mismatch: {marker_phases}", file=sys.stderr)
+        return 1
+    slot_filter_resp = {
+        "status": "success",
+        "data": {
+            "result": [
+                {
+                    "metric": {"job": "nest-baseline", "name": "realticket_nest-baseline.1.abc"},
+                    "values": [[1777663801, "1.0"], [1777663802, "1.0"]],
+                },
+                {
+                    "metric": {"job": "nest-candidate", "name": "realticket_nest-candidate.1.def"},
+                    "values": [[1777663801, "9.0"], [1777663802, "9.0"]],
+                },
+            ]
+        },
+    }
+    slot_filtered = _slice_window(slot_filter_resp, 1777663801, 1777663802, slot="baseline")
+    if slot_filtered.get("mean") != 1.0 or slot_filtered.get("count") != 2:
+        print(f"FAIL: slot series filtering mismatch: {slot_filtered}", file=sys.stderr)
+        return 1
+    try:
+        marker_path.unlink(missing_ok=True)
+        marker_dir.rmdir()
+    except OSError:
+        pass
     # prom_metrics.json 파일 존재 검증
     if not (iter_dir / "prom_metrics.json").exists():
         print("FAIL: prom_metrics.json 미작성", file=sys.stderr)
