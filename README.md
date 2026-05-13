@@ -1,3 +1,7 @@
+**관련 repo:**
+- 측정 대상 서비스 Real-Ticket: [web04-RealTicket](https://github.com/boostcampwm-2024/web04-RealTicket)
+- Gatling 부하 시뮬레이터: [realticket-gatling-simulations](https://github.com/kyu4583/realticket-gatling-simulations)
+
 # realticket-bench-platform
 
 **AI를 실행 주체로 설계한 부하 벤치마크 플랫폼이다.** 사용자의 역할은 자연어 명령과 결과 확인이 전부다.
