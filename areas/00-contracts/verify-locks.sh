@@ -125,15 +125,15 @@ for marker in RUNNING COMPLETED FAILED; do
     fail "Lock #4 — $marker 마커 누락"
   fi
 done
-# progress.json 6 필드 (atomic write — jq -n one-liner 또는 분리 라인)
-if grep -qE 'current_iter.*total_iter.*eta.*phase.*slot.*failed_iters|failed_iters.*slot.*phase.*eta.*total_iter.*current_iter' areas/02-orchestration/lib/lifecycle.sh; then
-  pass "Lock #4 — progress.json 6 필드 (jq -n one-liner)"
+# progress.json 8 필드 (atomic write — jq -n one-liner 또는 분리 라인)
+if grep -qE 'current_iter.*total_iter.*eta.*phase.*slot.*failed_iters.*started_at.*updated_at|updated_at.*started_at.*failed_iters.*slot.*phase.*eta.*total_iter.*current_iter' areas/02-orchestration/lib/lifecycle.sh; then
+  pass "Lock #4 — progress.json 8 필드 (jq -n one-liner)"
 else
-  m=$(grep -cE '"(current_iter|total_iter|eta|phase|slot|failed_iters)"' areas/02-orchestration/lib/lifecycle.sh 2>/dev/null)
-  if [[ "$m" -ge 6 ]]; then
-    pass "Lock #4 — progress.json 6 필드 (분리 라인 카운트=$m)"
+  m=$(grep -cE '"(current_iter|total_iter|eta|phase|slot|failed_iters|started_at|updated_at)"' areas/02-orchestration/lib/lifecycle.sh 2>/dev/null)
+  if [[ "$m" -ge 8 ]]; then
+    pass "Lock #4 — progress.json 8 필드 (분리 라인 카운트=$m)"
   else
-    fail "Lock #4 — progress.json 6 필드 누락 (카운트=$m)"
+    fail "Lock #4 — progress.json 8 필드 누락 (카운트=$m)"
   fi
 fi
 # trap cleanup_on_exit EXIT (정상·실패·SIGINT 모두 cleanup)

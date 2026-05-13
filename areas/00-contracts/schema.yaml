@@ -23,6 +23,7 @@
 #  12.  event_ids        int[]   ✓  reset 호출할 eventId 배열
 #  13.  queries          obj[]   ✓  {name, promql, unit} — summarize 대상 PromQL
 #  14.  slots            obj[]   ✓  {name, targetUrl, image_tag, scenario_mode?, source_branch?} — 최대 2 슬롯 (Lock #3)
+#          └ image_tag      str  ✓  VM 이미지 태그 assertion. 1슬롯 nest:<manifest_id>, 2슬롯 nest:<manifest_id>-<slot_name>
 #          └ source_branch  str  ◐  RealTicket 슬롯 브랜치 기점. 미지정 시 origin/dev. 02-orchestration 소비
 #  15.  hypotheses       obj[]   ✗  가설 절 (선택). 미존재 시 SUMMARY.md 가설 섹션 미생성
 #
@@ -112,8 +113,8 @@ slots:
 bench_stack:
   alpha_test_account: false   # α — true 시 redis-master.image 가 redis-test-account:latest 로 leaf override
   beta_dual_slots:    false   # β — true 시 nest-candidate 신규 service 추가 (포트 8081)
-  gamma_sentinel:     false   # γ — true 시 redis-replica + redis-sentinel-1/2/3 추가 + nest-baseline.environment.REDIS_SENTINEL_MODE override
-  delta_autoscaler:   false   # δ — true 시 autoscaler 신규 service 추가
+  gamma_sentinel:     false   # γ — experimental. true 시 redis-replica + redis-sentinel-1/2/3 추가 + nest-baseline.environment.REDIS_SENTINEL_MODE override
+  delta_autoscaler:   false   # δ — experimental. true 시 autoscaler 신규 service 추가
 
 # context (object, optional) — 파이프라인 미소비
 # 실험 목적·비교 변수·설계 결정을 자연어로 기록. 매니페스트 작성 세션에서 AI가 채움.

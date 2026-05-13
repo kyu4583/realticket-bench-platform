@@ -40,12 +40,14 @@ reset_slots() {
   shift 2
   local event_ids=("$@")
   local target="${SLOT_TARGETS[$slot_idx]:-http://192.168.138.2:8080}"
+  local reset_path="${RESET_PATH:-/booking/init/:eventId}"
 
   for ev in "${event_ids[@]}"; do
     [[ -z "$ev" ]] && continue
+    local ev_path="${reset_path//:eventId/$ev}"
     local attempt=1 code=""
     while (( attempt <= RESET_RETRY_COUNT )); do
-      code=$(curl -s -X POST "${target}/booking/init/${ev}" \
+      code=$(curl -s -X POST "${target}${ev_path}" \
         -H "Cookie: SID=$sid" \
         -o /dev/null -w '%{http_code}') || code="000"
       if [[ "$code" == "200" || "$code" == "201" ]]; then
@@ -86,15 +88,18 @@ write_progress() {
         slot="$5" failed_iters="$6" run_start_ts="$7" iter_estimate_s="$8" cooldown_s="$9"
   local remaining=$(( total_iter - current_iter ))
   [[ $remaining -lt 0 ]] && remaining=0
-  local now eta_epoch eta
+  local now eta_epoch eta started_at updated_at
   now=$(date +%s)
   eta_epoch=$(( now + remaining * (iter_estimate_s + cooldown_s) ))
   eta=$(date -u -d "@$eta_epoch" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
+  started_at=$(date -u -d "@$run_start_ts" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
+  updated_at=$(date -u -d "@$now" +%FT%TZ 2>/dev/null || date -u +%FT%TZ)
   jq -n \
     --argjson ci "$current_iter" --argjson ti "$total_iter" \
     --arg phase "$phase" --arg slot "$slot" \
     --argjson fi "$failed_iters" --arg eta "$eta" \
-    '{current_iter:$ci,total_iter:$ti,eta:$eta,phase:$phase,slot:$slot,failed_iters:$fi}' \
+    --arg started_at "$started_at" --arg updated_at "$updated_at" \
+    '{current_iter:$ci,total_iter:$ti,eta:$eta,phase:$phase,slot:$slot,failed_iters:$fi,started_at:$started_at,updated_at:$updated_at}' \
     > "${run_dir}/progress.json.tmp.$$"
   mv "${run_dir}/progress.json.tmp.$$" "${run_dir}/progress.json"
 }

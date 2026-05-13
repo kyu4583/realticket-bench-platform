@@ -30,7 +30,7 @@
 | 2 | `scenarioMode` | enum (`DYNAMIC`\|`STATIC`\|`PARALLEL`\|`LOGIN_ONLY`) + 커스텀 | `LOGIN_ONLY` | 기본 4종 고정. 매니페스트 목적에 따라 bench/<manifest_id> 브랜치에서 Gatling 코드 수정으로 커스텀 모드 추가 가능 (일회성 — main 영구 변경 금지) |
 | 3 | `targetUrl` | string | `192.168.138.2:8080` | 부하 대상 URL |
 | 4 | `planPath` | string (path) | null → classpath fallback | Plan.json 절대/상대 경로 |
-| 5 | `targetEvent` | int | `1` | 부하 대상 RealTicket eventId |
+| 5 | `targetEvent` | int | manifest `event_ids` | 부하 대상 RealTicket eventId. 02-orchestration 이 슬롯별 `event_ids` 매핑을 `-PtargetEvent` 로 주입 |
 | 6 | `dynamicUserCount` | int | `200` | DYNAMIC 모드의 동시 사용자 수 |
 | 7 | `fixedBookingAmount` | int | `4` (음수면 랜덤) | 1 사용자가 시도하는 좌석 수 |
 | 8 | `maxRetryInBookingConflict` | int | `100` | booking 충돌 재시도 횟수 상한 |

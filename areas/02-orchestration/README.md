@@ -18,11 +18,11 @@ manifest schema 정의는 [00-contracts/README.md](../00-contracts/README.md) �
 | 6 | `apply_untracked_overrides()` | branch | VM에 git 미추적 빌드 파일 scp 적용 + 경로 목록 기록 |
 | 7 | `build_vm_images()` | branch | VM: 매니페스트 ID 브랜치 pull → Dockerfile.dev-in-local 빌드 → 기존 stack 제거·대기 → docker stack deploy |
 | 8 | `admin_login()` | lifecycle | RealTicket `POST /user/login`으로 ADMIN SID 쿠키 획득 + HTTP 200 검증 |
-| 9 | `reset_slots()` | lifecycle | 활성 슬롯의 `event_ids[]`에 `POST /booking/init/:eventId` ADMIN 호출 |
+| 9 | `reset_slots()` | lifecycle | 활성 슬롯의 `event_ids[]`에 manifest `reset_path`로 ADMIN reset 호출 |
 | 10 | `get_slot_for_iter()` | lifecycle | iteration 회차(1..N)로 슬롯 선택. `idx = (iter-1) % len(slots)` — Lock #3 alternating |
 | 11 | `run_gatling()` | gatling | `./gradlew gatlingRunAndArchive -P...` 호출. -P 키는 [04-gatling-integration/README.md](../04-gatling-integration/README.md) 참조 |
-| 12 | `collect_prometheus()` | prom | Prometheus `query_range` API로 `queries[]` PromQL 수집 → `prometheus_<query>.csv` |
-| 13 | `write_progress()` | lifecycle | `progress.json.tmp` → `mv` (atomic). 6 필드 갱신 |
+| 12 | `collect_prometheus()` | prom | Prometheus `query_range` API로 `queries[]` PromQL 수집 → `prom_metrics.json` |
+| 13 | `write_progress()` | lifecycle | `progress.json.tmp` → `mv` (atomic). 8 필드 갱신 |
 | 14 | `write_iter_meta()` | lifecycle | iter 디렉토리에 메타(slot·image_tag·started_at·completed_at·exit_code) JSON 작성 |
 | 15 | `rollback_untracked_overrides()` | branch | `untracked-overrides.list`의 경로만 VM에서 롤백. 다른 환경 변경 금지 |
 | 16 | `restore_main_branches()` | branch | gatling + RealTicket repo 모두 main 체크아웃 복귀. 브랜치 삭제 X |

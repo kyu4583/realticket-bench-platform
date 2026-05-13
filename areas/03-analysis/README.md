@@ -30,11 +30,11 @@
 
 ### `summarize.py`
 
-- **입력:** run 디렉토리 전체 — 각 iter의 `stats.json` + `prom_metrics.json` + 매니페스트 `hypotheses:` 절(존재 시)
+- **입력:** run 디렉토리 전체 — 각 iter의 `stats.json` + `prom_metrics.json` + 실행 시점 `manifest.yaml` 스냅샷 또는 `bench/manifests/<manifest_id>.yaml` 의 `hypotheses:` 절(존재 시)
 - **출력:** `bench/results/<manifest_id>/<run_id>/SUMMARY.md` — 3 섹션:
   1. `Gatling metrics by phase` — `stats.json` 기반 (request_name 별 Total·Cnt/s·Min·50th pct·75th pct·95th pct·99th pct·Max·Mean·Std Dev; OK·KO·%KO는 SUMMARY 표에서 제외). `stats.json`에는 phase 축이 없으므로 request_name으로 phase를 보수적으로 추정하고, 실패 시 `unmapped` 표로 분리
   2. `Prometheus metrics by phase` — `prom_metrics.json` 기반 (query별 mean median across iters). phase마다 별도 표를 만들고 같은 phase 안에서 slot 행을 붙임
-  3. `가설 판정` — manifest `hypotheses:` 존재 시 PASS/FAIL
+  3. `가설 판정` — manifest `hypotheses:` 존재 시 PASS/FAIL. `qualitative` 비교는 수치 PASS/FAIL 대신 수동 해석 대상으로 표시
 - **단독 CLI:** `python areas/03-analysis/analyze/summarize.py bench/results/<manifest_id>/<run_id>`
 - **책임 경계:** 집계·표 생성만. 새 메트릭 계산 X — 모든 숫자는 stats.json·prom CSV에서 읽어옴. 기존 `<!-- AI_INTERPRETATION:START -->` 관리 섹션이 있으면 재생성 시 보존한다.
 
@@ -61,7 +61,7 @@
 | 시뮬레이션 단계 정의 | `<run_dir>/phases.json` |
 | Gatling wait 진입 marker | `iter-N-<slot>/phase_markers.jsonl` |
 | per-request 분석 | `iter-N-<slot>/raw_requests.jsonl` (1줄 = 1 요청) |
-| Prometheus 시계열 | `iter-N-<slot>/prometheus_<query>.csv` |
+| Prometheus phase 집계 | `iter-N-<slot>/prom_metrics.json` |
 
 ---
 

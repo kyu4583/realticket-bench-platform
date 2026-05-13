@@ -58,7 +58,7 @@ main() {
   # 실행 전 구현 품질 gate:
   # 매니페스트 작성 세션은 Gatling read-only 리서치 + 구현 계획 기록만 수행하고,
   # 구현 세션이 완료 표시를 남긴 뒤에만 실제 벤치마크를 실행한다.
-  local impl_status gatling_research gatling_change_count
+  local impl_status gatling_research gatling_change_count max_failures
   impl_status=$(manifest_yq 'implementation_plan.status' "$manifest")
   [[ "$impl_status" == "completed" ]] \
     || die "implementation_plan.status must be completed before execution (got: ${impl_status:-missing})"
@@ -69,34 +69,90 @@ main() {
   if ! [[ "$gatling_change_count" =~ ^[0-9]+$ ]] || (( gatling_change_count < 1 )); then
     die "implementation_plan.gatling.change_plan must contain at least one planned change before execution"
   fi
+  max_failures=$(manifest_yq 'max_failures' "$manifest")
+  [[ "$max_failures" =~ ^[0-9]+$ && "$max_failures" -gt 0 ]] \
+    || die "max_failures must be a positive integer (got: ${max_failures:-missing})"
+
+  local event_count reset_path
+  event_count=$(manifest_yq 'event_ids | length' "$manifest")
+  [[ "$event_count" =~ ^[0-9]+$ && "$event_count" -ge 1 ]] \
+    || die "manifest event_ids[] is required and non-empty"
+  reset_path=$(manifest_yq 'reset_path' "$manifest")
+  [[ "$reset_path" != "null" && -n "$reset_path" ]] \
+    || die "reset_path is required"
+  [[ "$reset_path" == /* && "$reset_path" == *":eventId"* ]] \
+    || die "reset_path must start with '/' and contain ':eventId' (got: $reset_path)"
+  [[ "$reset_path" =~ ^/[A-Za-z0-9_./:-]+$ ]] \
+    || die "reset_path contains unsupported characters: $reset_path"
+  export RESET_PATH="$reset_path"
+
   # SLOT_TARGETS 배열 빌드 (manifest.slots[].targetUrl)
-  local slot_count slot_names
+  local slot_count slot_names beta_dual_slots gamma_sentinel delta_autoscaler
   slot_count=$(manifest_yq 'slots | length' "$manifest")
   [[ "$slot_count" == "null" || -z "$slot_count" ]] && slot_count=1
   # slots: [] 명시적 빈 배열 → modulo 0 차단
-  [[ "$slot_count" -ge 1 ]] || die "slots[] 배열에 슬롯이 1개 이상 필요"
+  [[ "$slot_count" =~ ^[0-9]+$ && "$slot_count" -ge 1 ]] || die "slots[] 배열에 슬롯이 1개 이상 필요"
+  [[ "$slot_count" -le 2 ]] || die "slots[] must contain at most 2 slots (Lock #3), got: $slot_count"
+  beta_dual_slots=$(manifest_yq 'bench_stack.beta_dual_slots' "$manifest")
+  gamma_sentinel=$(manifest_yq 'bench_stack.gamma_sentinel' "$manifest")
+  delta_autoscaler=$(manifest_yq 'bench_stack.delta_autoscaler' "$manifest")
+  [[ "$beta_dual_slots" == "null" || -z "$beta_dual_slots" ]] && beta_dual_slots=false
+  [[ "$gamma_sentinel" == "null" || -z "$gamma_sentinel" ]] && gamma_sentinel=false
+  [[ "$delta_autoscaler" == "null" || -z "$delta_autoscaler" ]] && delta_autoscaler=false
+  if (( slot_count == 2 )) && [[ "$beta_dual_slots" != "true" ]]; then
+    die "bench_stack.beta_dual_slots must be true when slots[] has 2 entries"
+  fi
+  if (( slot_count == 1 )) && [[ "$beta_dual_slots" == "true" ]]; then
+    die "bench_stack.beta_dual_slots must be false when slots[] has 1 entry"
+  fi
+  if [[ "$gamma_sentinel" == "true" && "${BENCH_ALLOW_EXPERIMENTAL_STACK:-0}" != "1" ]]; then
+    die "bench_stack.gamma_sentinel is experimental: untracked Redis entrypoint deployment is not implemented. Set BENCH_ALLOW_EXPERIMENTAL_STACK=1 to bypass."
+  fi
+  if [[ "$delta_autoscaler" == "true" && "${BENCH_ALLOW_EXPERIMENTAL_STACK:-0}" != "1" ]]; then
+    die "bench_stack.delta_autoscaler is experimental: autoscaler image/deploy contract is not locked. Set BENCH_ALLOW_EXPERIMENTAL_STACK=1 to bypass."
+  fi
+  if (( event_count != 1 && event_count != slot_count )); then
+    die "event_ids[] length must be 1 or match slots[] length (event_ids=$event_count slots=$slot_count)"
+  fi
   declare -ga SLOT_TARGETS=()
   declare -ga SLOT_NAMES=()
   declare -ga SLOT_SCENARIO=()
   declare -ga SLOT_SOURCE_BRANCH=()
+  declare -ga SLOT_TARGET_EVENT=()
   local i=0
   while [[ $i -lt $slot_count ]]; do
-    local turl sname smode sbranch
+    local turl sname image_tag smode sbranch target_event expected_image_tag
     turl=$(manifest_yq "slots[$i].targetUrl" "$manifest")
     sname=$(manifest_yq "slots[$i].name" "$manifest")
+    image_tag=$(manifest_yq "slots[$i].image_tag" "$manifest")
     smode=$(manifest_yq "slots[$i].scenario_mode" "$manifest")
     sbranch=$(manifest_yq "slots[$i].source_branch" "$manifest")
+    if (( event_count == 1 )); then
+      target_event=$(manifest_yq 'event_ids[0]' "$manifest")
+    else
+      target_event=$(manifest_yq "event_ids[$i]" "$manifest")
+    fi
     [[ "$turl"    == "null" || -z "$turl"    ]] && turl="http://192.168.138.2:8080"
     [[ "$sname"   == "null" || -z "$sname"   ]] && sname="slot-$i"
+    [[ "$image_tag" != "null" && -n "$image_tag" ]] || die "slots[$i].image_tag is required"
     [[ "$smode"   == "null" || -z "$smode"   ]] && smode="LOGIN_ONLY"
     [[ "$sbranch" == "null" || -z "$sbranch" ]] && sbranch=""
+    if (( slot_count == 1 )); then
+      expected_image_tag="nest:$MANIFEST_ID"
+    else
+      expected_image_tag="nest:$MANIFEST_ID-$sname"
+    fi
+    [[ "$image_tag" == "$expected_image_tag" ]] \
+      || die "slots[$i].image_tag must match derived VM image tag '$expected_image_tag' (got: $image_tag)"
+    [[ "$target_event" =~ ^[0-9]+$ ]] || die "event_ids target for slot index $i must be an integer (got: $target_event)"
     SLOT_TARGETS+=("$turl")
     SLOT_NAMES+=("$sname")
     SLOT_SCENARIO+=("$smode")
     SLOT_SOURCE_BRANCH+=("$sbranch")
+    SLOT_TARGET_EVENT+=("$target_event")
     i=$((i + 1))
   done
-  export SLOT_TARGETS SLOT_NAMES SLOT_SCENARIO SLOT_SOURCE_BRANCH
+  export SLOT_TARGETS SLOT_NAMES SLOT_SCENARIO SLOT_SOURCE_BRANCH SLOT_TARGET_EVENT
   slot_names=$(manifest_yq 'slots[].name' "$manifest")
   # slot 이름도 git branch / docker image tag / ssh 인자로 들어가므로 검증
   for slot in $slot_names; do
@@ -156,6 +212,8 @@ main() {
   manifest_results_dir="$REPO_ROOT/bench/results/$MANIFEST_ID"
   run_dir="$manifest_results_dir/$run_id"
   mkdir -p "$run_dir"
+  cp -f "$manifest" "$run_dir/manifest.yaml" \
+    || die "failed to snapshot manifest into run_dir: $run_dir/manifest.yaml"
   : > "$run_dir/run.log"
   exec > >(tee -a "$run_dir/run.log") 2>&1
 
@@ -298,17 +356,15 @@ main() {
     iter_start=$(date +%s)
     write_progress "$run_dir" "$current_iter" "$total_iter" "run" "$current_slot" "$failed_iters" "$run_start_ts" "$iter_estimate_s" "$cooldown_s"
 
-    # event_ids (스페이스 분리 list)
-    local event_ids
-    event_ids=$(manifest_yq 'event_ids[]' "$manifest")
-    # event_ids[] 부재 시 빈 출력 → reset silent skip 방지
-    [[ -n "$event_ids" ]] || die "manifest event_ids[] is required and non-empty"
+    # slot별 target event: event_ids 길이 1이면 공통, 슬롯 수와 같으면 슬롯별 매핑
+    local event_id
+    event_id="${SLOT_TARGET_EVENT[$slot_idx]:-}"
+    [[ "$event_id" =~ ^[0-9]+$ ]] || die "target event for slot=$current_slot is invalid: ${event_id:-missing}"
 
     # reset → run_gatling → collect_prom → write_iter_meta
     # reset 재시도 모두 실패 → iter 통째 즉시 실패 (사용자 결정 2026-05-04).
     # run_gatling/prom/write_iter_meta(정상) 모두 skip, iter_meta_failed 만 기록 후 다음 iter 로.
-    # shellcheck disable=SC2086
-    if ! reset_slots "$slot_idx" "$sid" $event_ids; then
+    if ! reset_slots "$slot_idx" "$sid" "$event_id"; then
       failed_iters=$((failed_iters + 1))
       write_iter_meta_failed "$iter_dir" "$current_iter" "$current_slot" "$plan_path" "$iter_start" \
         "${RESET_FAILED_EVENT:-?}" "${RESET_FAILED_HTTP:-?}"
@@ -322,6 +378,9 @@ main() {
       if [[ "${slot_failed_before[$slot_idx]:-0}" == "1" ]]; then
         die "main: 동일 슬롯 reset 폐기 재발 — slot=$slot_idx 두 번째 폐기 (iter=$current_iter, run 중단)"
       fi
+      if (( failed_iters >= max_failures )); then
+        die "main: max_failures reached after reset failure — failed_iters=$failed_iters max_failures=$max_failures"
+      fi
       last_failed_iter=$current_iter
       slot_failed_before[$slot_idx]=1
       executed_iters=$current_iter
@@ -331,7 +390,13 @@ main() {
       current_iter=$((current_iter + 1))
       continue
     fi
-    run_gatling "$slot_idx" "$plan_path" "$iter_dir" || failed_iters=$((failed_iters + 1))
+    if ! run_gatling "$slot_idx" "$plan_path" "$iter_dir"; then
+      failed_iters=$((failed_iters + 1))
+      log WARN "main: run_gatling failed — iter=$current_iter slot=$current_slot failed_iters=$failed_iters/$max_failures"
+      if (( failed_iters >= max_failures )); then
+        die "main: max_failures reached after Gatling failure — failed_iters=$failed_iters max_failures=$max_failures"
+      fi
+    fi
     local iter_end
     iter_end=$(date +%s)
     collect_prometheus "$prom_url" "$iter_dir" "$iter_start" "$iter_end" "$manifest"
@@ -376,6 +441,7 @@ main() {
   else
     log WARN "summarize.py not found — skipping"
   fi
+  write_progress "$run_dir" "$executed_iters" "$executed_iters" "done" "${current_slot:-}" "$failed_iters" "$run_start_ts" 0 0
 
   # COMPLETED 마커 (Lock #4)
   rm -f "$run_dir/RUNNING"

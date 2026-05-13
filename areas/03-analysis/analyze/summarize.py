@@ -4,11 +4,9 @@
 Source: areas/03-analysis/README.md § 분석 모듈 스펙
 """
 from __future__ import annotations
-import argparse, ast, json, operator as _op, statistics, sys
+import argparse, ast, json, operator as _op, statistics, sys, tempfile
 from pathlib import Path
 from typing import Any
-
-FIXTURES_DIR = Path(__file__).parent / "tests" / "fixtures"
 
 GATLING_SUMMARY_COLUMNS: list[tuple[str, str, str]] = [
     ("total", "Total", "median"),
@@ -25,6 +23,22 @@ GATLING_SUMMARY_COLUMNS: list[tuple[str, str, str]] = [
 
 AI_INTERPRETATION_START = "<!-- AI_INTERPRETATION:START -->"
 AI_INTERPRETATION_END = "<!-- AI_INTERPRETATION:END -->"
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _manifest_candidates(run_p: Path) -> list[Path]:
+    manifest_id = run_p.parent.name
+    return [
+        run_p / "manifest.yaml",
+        run_p / "manifest.yml",
+        run_p.parent / "manifest.yaml",
+        run_p.parent / f"{manifest_id}.yaml",
+        _repo_root() / "bench" / "manifests" / f"{manifest_id}.yaml",
+        _repo_root() / "bench" / "manifests" / f"{manifest_id}.yml",
+    ]
 
 
 def _median_or_none(values: list[float]) -> float | None:
@@ -104,6 +118,11 @@ def _build_hypothesis_table(hypotheses: list[dict], slot_metrics: dict) -> list[
         compare = h["compare"]
         baseline = slot_metrics.get("baseline", {}).get(metric)
         candidate = slot_metrics.get("candidate", {}).get(metric)
+        if compare.strip().lower().startswith("qualitative"):
+            baseline_s = f"{baseline:.3f}" if baseline is not None else "-"
+            candidate_s = f"{candidate:.3f}" if candidate is not None else "-"
+            lines.append(f"| {h['id']} | {metric} | {compare} | {baseline_s} | {candidate_s} | QUALITATIVE (manual interpretation) |")
+            continue
         if baseline is None or candidate is None:
             lines.append(f"| {h['id']} | {metric} | {compare} | - | - | SKIP (missing data) |")
             continue
@@ -318,7 +337,7 @@ def summarize_run(run_dir: str) -> str:
     if not run_p.exists():
         return f"ERROR: run_dir not found: {run_dir}"
 
-    manifest_files = sorted(run_p.glob("manifest.yaml")) or sorted(run_p.parent.glob("*.yaml"))
+    manifest_files = [p for p in _manifest_candidates(run_p) if p.exists()]
     hypotheses: list[dict] = []
     query_units: dict[str, str] = {}
     manifest_id = run_p.name
@@ -338,6 +357,7 @@ def summarize_run(run_dir: str) -> str:
     # slot × phase × query 집계 (prom_metrics.json)
     slot_phase_query: dict[str, dict[str, dict[str, dict[str, list[float]]]]] = {}
     slot_metrics: dict[str, dict[str, float]] = {}
+    slot_metric_values: dict[str, dict[str, list[float]]] = {}
 
     for d in iter_dirs:
         parts = d.name.split("-", 2)
@@ -387,8 +407,16 @@ def summarize_run(run_dir: str) -> str:
                             except (TypeError, ValueError):
                                 continue
                             bucket.setdefault(stat_name, []).append(stat_float)
+                            if phase_name == "_iter_total" and stat_name == "mean":
+                                slot_metric_values.setdefault(slot, {}).setdefault(q_name, []).append(stat_float)
             except (json.JSONDecodeError, OSError):
                 pass
+
+    for slot, metrics in slot_metric_values.items():
+        for metric_name, values in metrics.items():
+            agg = _median_or_none(values)
+            if agg is not None:
+                slot_metrics.setdefault(slot, {})[metric_name] = agg
 
     lines = [
         f"# SUMMARY — {manifest_id}",
@@ -432,7 +460,8 @@ def summarize_run(run_dir: str) -> str:
 
 
 def _selftest() -> int:
-    run_dir = FIXTURES_DIR / "selftest_run"
+    tmp_ctx = tempfile.TemporaryDirectory(prefix="realticket-summarize-selftest-")
+    run_dir = Path(tmp_ctx.name) / "selftest_run"
     run_dir.mkdir(exist_ok=True)
     iter_dir = run_dir / "iter-1-baseline"
     iter_dir.mkdir(exist_ok=True)

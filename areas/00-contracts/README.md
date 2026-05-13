@@ -22,12 +22,12 @@
 | 8 | `plan_path` | string (path to Plan.json) | ✓ | PlanGenerator 출력 JSON 경로. 좌석 배정 시뮬레이션 결과 (requests·collision_groups·stats). |
 | 9 | `prom_url` | string (URL) | ✓ | Prometheus base URL (`http://192.168.138.2:9090`) |
 | 10 | `prom_step` | duration | ✓ | Prometheus query_range step (예: `1s`) |
-| 11 | `reset_path` | string (URL path) | ✓ | BE reset endpoint path (`/booking/init/:eventId`) |
-| 12 | `event_ids` | int[] | ✓ | reset 호출할 eventId 배열 (alternating 시 슬롯별 매칭) |
+| 11 | `reset_path` | string (URL path) | ✓ | BE reset endpoint path. `:eventId` placeholder required, 예: `/booking/init/:eventId` |
+| 12 | `event_ids` | int[] | ✓ | reset/Gatling targetEvent. 길이 1이면 모든 슬롯 공통, 슬롯 수와 같으면 alternating 슬롯별 매칭 |
 | 13 | `queries` | object[] (`{name,promql,unit}`) | ✓ | summarize 대상 Prometheus 쿼리 목록 |
-| 14 | `slots` | object[] | ✓ | 슬롯 정의. 최대 2 슬롯 (Lock #3). sub-fields: `name`(✓) `targetUrl`(✓) `image_tag`(✓) `scenario_mode`(◐ 슬롯별 override, 사용자 확인 시에만 기록) `source_branch`(◐ RealTicket 슬롯 브랜치 기점. 슬롯 ≥ 2 비교에서는 필수이며 02-orchestration 이 누락·ancestry 불일치를 hard fail 처리) |
+| 14 | `slots` | object[] | ✓ | 슬롯 정의. 최대 2 슬롯 (Lock #3). sub-fields: `name`(✓) `targetUrl`(✓) `image_tag`(✓, VM 이미지 태그 assertion. 1슬롯 `nest:<manifest_id>`, 2슬롯 `nest:<manifest_id>-<slot_name>`) `scenario_mode`(◐ 슬롯별 override, 사용자 확인 시에만 기록) `source_branch`(◐ RealTicket 슬롯 브랜치 기점. 슬롯 ≥ 2 비교에서는 필수이며 02-orchestration 이 누락·ancestry 불일치를 hard fail 처리) |
 | 15 | `hypotheses` | object[] | ✗ | 가설 절. 미존재 시 `summarize.py`가 가설 섹션 미생성 |
-| + | `bench_stack` | object (`{alpha_test_account, beta_dual_slots, gamma_sentinel, delta_autoscaler}` — 모두 boolean, default `false`) | ✗ | optional. 4 기능 토글. 미존재 시 모두 disabled — base.yml 단독 deploy |
+| + | `bench_stack` | object (`{alpha_test_account, beta_dual_slots, gamma_sentinel, delta_autoscaler}` — 모두 boolean, default `false`) | ✗ | optional. 4 기능 토글. 미존재 시 모두 disabled — base.yml 단독 deploy. m1 안정 실행 범위는 α/β이며, γ/δ는 `BENCH_ALLOW_EXPERIMENTAL_STACK=1` 없이는 fail-fast |
 | + | `context` | object | ✗ | optional. 실험 목적·비교 변수·설계 결정 기록. **run.sh 미소비**. 매니페스트 작성 세션에서 AI가 논의 내용을 채우며, 완료 후 사용자가 자연어로 요청하는 `SUMMARY.md` 목적 기반 해석의 1차 입력으로 사용 |
 | + | `implementation_plan` | object | ✗ | optional. 실행 전 외부 repo 구현 계획. `status: pending\|completed` + 영역별 계획. **run.sh preflight 소비** — `status: completed` 가 아니거나 `gatling.research_summary`/`gatling.change_plan` 이 비어 있으면 벤치마크 실행 금지 |
 | + | `workflow_state` | object | ✗ | optional. **실행 전 AI 작업 재개 상태**. 현재 작업 포인터·마지막 완료·다음 행동을 기록한다. `run.sh` 는 소비하지 않으며, 벤치마크 시작 후 진행 상태는 결과 디렉토리 마커와 `progress.json` 이 단일 진실 |
@@ -159,7 +159,8 @@ iteration = 매니페스트 내 N번째 반복 회차       # 1..N (iterations �
 ```
 bench/results/<manifest_id>/<run_id>/               # ex: bench/results/dry-run-001/dry-run-001-20260502-000552/
 ├── RUNNING | COMPLETED | FAILED                # 마커 1개. 종료 상태 단일 진실
-├── progress.json                                # 6 필드: current_iter·total_iter·phase·started_at·updated_at·eta
+├── manifest.yaml                                # 실행 시점 매니페스트 스냅샷. SUMMARY 재생성·사후 해석 입력
+├── progress.json                                # 8 필드: current_iter·total_iter·phase·slot·failed_iters·started_at·updated_at·eta
 ├── phases.json                                  # 시뮬레이션 단계(region) 정의 — run 단위 1개. 부재 시 prom_query 는 marker로만 도출
 ├── iter-1-baseline/                             # iteration 1 / slot baseline
 │   ├── simulation.log                           # Gatling 출력
@@ -177,7 +178,7 @@ bench/results/<manifest_id>/<run_id>/               # ex: bench/results/dry-run-
 
 > **마커 단일 진실:** RUNNING은 시작 시 1번 작성, COMPLETED 또는 FAILED 둘 중 하나가 종료 시 대체. 두 마커 동시 존재 = bug.
 >
-> **progress.json 6 필드:** `current_iter`·`total_iter`·`phase`(warmup|run|cooldown|done)·`started_at`·`updated_at`·`eta`. fire-and-forget 모드에서 사용자가 진행 상태 확인 가능.
+> **progress.json 8 필드:** `current_iter`·`total_iter`·`phase`(warmup|run|cooldown|done)·`slot`·`failed_iters`·`started_at`·`updated_at`·`eta`. fire-and-forget 모드에서 사용자가 진행 상태 확인 가능.
 >
 > **iter 디렉토리 명명:** `iter-<N>-<slot>` 패턴.
 >
