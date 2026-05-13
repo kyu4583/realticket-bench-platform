@@ -45,7 +45,9 @@ build_vm_images()             # 7번 함수
 admin_login()                 # 8번 함수
 ```
 
-검증 전용으로 `BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh <manifest>` 를 실행하면 preflight 통과 여부만 확인한다. 이때 RealTicket 원격 ref 확인을 위해 `git fetch origin` 은 수행하지만, 외부 repo 브랜치 생성·수정, VM 작업, 결과 디렉토리 생성은 하지 않는다.
+검증 전용으로 `BENCH_PREFLIGHT_ONLY=1 bash areas/02-orchestration/run.sh <manifest>` 를 실행하면 preflight 통과 여부만 확인한다. 이때 Gatling/RealTicket 원격 ref 확인을 위해 `git fetch origin` 은 수행하지만, 외부 repo 브랜치 생성·수정, VM 배포, 결과 디렉토리 생성은 하지 않는다. preflight 는 `implementation_plan` gate, active `RUNNING` 마커 부재, 외부 repo dirty 상태, Gatling base ref, RealTicket `origin/dev`, 슬롯 source ancestry, `ADMIN_ID`/`ADMIN_PASSWORD`, VM SSH, Prometheus `/-/ready` 를 확인한다.
+
+운영자가 의도적으로 예외를 허용해야 하는 경우에만 `BENCH_ALLOW_DIRTY_REPOS=1` 또는 `BENCH_ALLOW_RUNNING=1` 로 dirty repo / 기존 RUNNING 마커 검사를 우회한다. 기본값은 fail-fast다.
 
 ### iter 루프 (매니페스트 실행)
 

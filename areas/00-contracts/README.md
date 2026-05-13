@@ -92,7 +92,7 @@ implementation_plan:
       - "alpha_test_account=true 일 때 login 액션 생략 필요"
 ```
 
-`run.sh` 의 실행 전 preflight 는 최소한 `implementation_plan.status == completed`, `implementation_plan.gatling.research_summary` 존재, `implementation_plan.gatling.change_plan` 1개 이상, 슬롯 ≥ 2 비교의 `slots[].source_branch` 존재와 `bench/<manifest_id>/<slot>` ancestry 일치를 검사한다.
+`run.sh` 의 실행 전 preflight 는 최소한 `implementation_plan.status == completed`, `implementation_plan.gatling.research_summary` 존재, `implementation_plan.gatling.change_plan` 1개 이상, active `RUNNING` 마커 부재, 외부 Gatling/RealTicket repo clean 상태, Gatling base ref 존재, RealTicket `origin/dev` 존재, 슬롯 ≥ 2 비교의 `slots[].source_branch` 존재와 `bench/<manifest_id>/<slot>` ancestry 일치를 검사한다. `BENCH_PREFLIGHT_ONLY=1` 모드에서는 여기에 `ADMIN_ID`/`ADMIN_PASSWORD`, VM SSH, Prometheus `/-/ready` 확인을 추가한다.
 
 ### `workflow_state` 재개 구조
 

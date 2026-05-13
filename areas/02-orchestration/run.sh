@@ -33,6 +33,8 @@ main() {
   declare -g run_dir="" current_iter="" current_slot=""
   declare -g cleanup_external_repos=0
   check_deps
+  [[ -d "$GATLING_DIR/.git" ]] || die "GATLING_DIR is not a git repo: $GATLING_DIR"
+  [[ -d "$REALTICKET_DIR/.git" ]] || die "REALTICKET_DIR is not a git repo: $REALTICKET_DIR"
 
   # .env source (있으면)
   if [[ -f "$REPO_ROOT/areas/06-vm-environment/.env" ]]; then
@@ -54,6 +56,13 @@ main() {
   [[ "$run_id_prefix" == "null" || -z "$run_id_prefix" ]] && run_id_prefix="$MANIFEST_ID"
   [[ "$run_id_prefix" =~ ^[A-Za-z0-9_-]+$ ]] \
     || die "run_id_prefix 가 [A-Za-z0-9_-]+ 패턴 위반: $run_id_prefix"
+
+  if [[ "${BENCH_ALLOW_RUNNING:-0}" != "1" ]]; then
+    local running_markers
+    running_markers=$(find "$REPO_ROOT/bench/results" -path "*/RUNNING" -type f -print 2>/dev/null | head -5 || true)
+    [[ -z "$running_markers" ]] \
+      || die "preflight: active RUNNING marker exists; finish or remove stale marker before starting. Set BENCH_ALLOW_RUNNING=1 to bypass. markers: $running_markers"
+  fi
 
   # 실행 전 구현 품질 gate:
   # 매니페스트 작성 세션은 Gatling read-only 리서치 + 구현 계획 기록만 수행하고,
@@ -199,9 +208,36 @@ main() {
   [[ "$gatling_local_only" == "true" ]] && export GATLING_LOCAL_ONLY=1 || export GATLING_LOCAL_ONLY=0
   export GATLING_BASE_REF="$gatling_base_ref"
 
+  if [[ "${BENCH_ALLOW_DIRTY_REPOS:-0}" != "1" ]]; then
+    local gatling_status realticket_status
+    gatling_status=$(git -C "$GATLING_DIR" status --porcelain --untracked-files=all)
+    realticket_status=$(git -C "$REALTICKET_DIR" status --porcelain --untracked-files=all)
+    [[ -z "$gatling_status" ]] \
+      || die "preflight: Gatling repo has local changes. Commit/stash/clean or set BENCH_ALLOW_DIRTY_REPOS=1."
+    [[ -z "$realticket_status" ]] \
+      || die "preflight: RealTicket repo has local changes. Commit/stash/clean or set BENCH_ALLOW_DIRTY_REPOS=1."
+  fi
+
+  if [[ "$GATLING_LOCAL_ONLY" != "1" ]]; then
+    git -C "$GATLING_DIR" fetch origin
+  fi
+  git -C "$GATLING_DIR" rev-parse --verify --quiet "${GATLING_BASE_REF}^{commit}" >/dev/null \
+    || die "preflight: Gatling base ref not found: $GATLING_BASE_REF"
   git -C "$REALTICKET_DIR" fetch origin
+  git -C "$REALTICKET_DIR" rev-parse --verify --quiet "origin/dev^{commit}" >/dev/null \
+    || die "preflight: RealTicket origin/dev not found"
 
   if [[ "${BENCH_PREFLIGHT_ONLY:-0}" == "1" ]]; then
+    [[ -n "${ADMIN_ID:-}" && -n "${ADMIN_PASSWORD:-}" ]] \
+      || die "preflight: ADMIN_ID and ADMIN_PASSWORD are required"
+    ssh -o ConnectTimeout=5 -o BatchMode=yes "$VM_HOST" true \
+      || die "preflight: VM ssh failed: $VM_HOST"
+    local preflight_prom_url
+    preflight_prom_url=$(manifest_yq 'prom_url' "$manifest")
+    [[ "$preflight_prom_url" != "null" && -n "$preflight_prom_url" ]] \
+      || die "preflight: prom_url is required"
+    curl -fsS --max-time 5 "${preflight_prom_url%/}/-/ready" >/dev/null \
+      || die "preflight: Prometheus is not ready: ${preflight_prom_url%/}"
     # shellcheck disable=SC2086
     validate_realticket_slot_source_refs "$MANIFEST_ID" $slot_names
     log INFO "preflight passed for manifest_id=$MANIFEST_ID"
