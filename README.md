@@ -9,10 +9,9 @@
 
 **AI를 실행 주체로 설계한 부하 벤치마크 플랫폼이다.**
 
-사용자는 자연어로 벤치마크 목적을 말하고 결과를 확인한다.
+**사용자 역할:** 자연어로 벤치마크 목적을 말하고 결과를 확인한다.
 
-AI는 마련된 컨텍스트 문서와 Skill을 바탕으로 manifest 작성, Gatling/RealTicket 준비, VM 배포, 실행, 분석, `SUMMARY.md` 생성까지 지휘한다.
-
+**AI 역할:** 마련된 **컨텍스트 문서**와 **Skill**을 바탕으로 manifest 작성, Gatling/RealTicket 준비, VM 배포, 실행, 분석, `SUMMARY.md` 생성까지 지휘한다.
 
 ## 관련 repo
 
@@ -22,16 +21,16 @@ AI는 마련된 컨텍스트 문서와 Skill을 바탕으로 manifest 작성, Ga
 | [realticket-gatling-simulations](https://github.com/kyu4583/realticket-gatling-simulations) | Gatling 부하 시뮬레이터 |
 | `realticket-bench-platform` | 벤치마크 지휘 repo |
 
-이 repo는 RealTicket이나 Gatling 코드를 포함하지 않는다. manifest와 run pipeline을 통해 외부 repo를 호출하고, 브랜치·VM·분석 산출물을 조율한다.
+이 repo는 RealTicket이나 Gatling 코드를 <u>포함하지 않는다</u>. **manifest와 run pipeline**을 통해 외부 repo를 호출하고, 브랜치·VM·분석 산출물을 조율한다.
 
 ## 핵심 흐름
 
-1. 사용자가 자연어로 벤치마크 목적을 설명한다.
-2. AI가 측정 목적·슬롯 구성·기능 토글·region 분할을 물어 manifest를 완성한다.
-3. AI가 Gatling 시나리오, RealTicket stack 정의, 외부 repo 브랜치, VM 빌드·배포를 준비한다.
-4. `run.sh`가 fire-and-forget 방식으로 Gatling 실행과 Prometheus 수집을 진행한다.
-5. 분석 모듈이 `SUMMARY.md`를 생성한다.
-6. 완료 후 사용자가 요청하면 AI가 목적 기반 해석 섹션을 추가하거나 교체한다.
+1. **목적 입력** — 사용자가 자연어로 벤치마크 목적을 설명한다.
+2. **Manifest 작성** — AI가 측정 목적·슬롯 구성·기능 토글·region 분할을 물어 manifest를 완성한다.
+3. **실행 준비** — AI가 Gatling 시나리오, RealTicket stack 정의, 외부 repo 브랜치, VM 빌드·배포를 준비한다.
+4. **장시간 실행** — `run.sh`가 fire-and-forget 방식으로 Gatling 실행과 Prometheus 수집을 진행한다.
+5. **자동 분석** — 분석 모듈이 `SUMMARY.md`를 생성한다.
+6. **해석 보강** — 완료 후 사용자가 요청하면 AI가 목적 기반 해석 섹션을 추가하거나 교체한다.
 
 ## 왜 필요한가?
 
@@ -42,15 +41,15 @@ AI는 마련된 컨텍스트 문서와 Skill을 바탕으로 manifest 작성, Ga
 - **이미지 빌드·VM 배포** — 스택 구성이 확정되면 RealTicket 소스를 VM으로 전달하고 Docker 이미지를 빌드한 뒤 stack을 재기동해야 한다. SSH 접속·소스 전달·이미지 빌드·스택 재기동이 매 벤치마크마다 반복되는 수작업이다.
 - **측정·분석 범위** — 어떤 구간에 집중하는지, 구간을 어떻게 자르는지, Prometheus에서 무엇을 수집하는지, 결과를 어떤 기준으로 해석하는지가 시나리오와 함께 달라진다.
 
-매번 이 요소들을 수동으로 맞추는 대신, "이런 목적으로 벤치마크를 하고 싶다"는 자연어 명령 하나로 전부 구성하고 실행하는 플랫폼이 필요했다.
+매번 이 요소들을 <u>수동으로 맞추는 대신</u>, "이런 목적으로 벤치마크를 하고 싶다"는 자연어 명령 하나로 전부 구성하고 실행하는 플랫폼이 필요했다.
 
 단, AI에게 명령만 내리는 것으로는 원하는 결과를 얻기 어렵다. 숙지할 내용이 많고 지켜야 할 규칙이 세밀하며 목적마다 달라지는 변수도 많다 — 맥락 없이 시키면 빠뜨리거나 일관성을 잃기 쉽다.
 
-그래서 책임을 7개 영역으로 나누고, 영역별 판단 기준은 컨텍스트 문서에, 반복 운영 절차는 Skill에 고정했다. AI가 각 영역에서 해야 할 일과 하지 말아야 할 일을 일관되게 판단하도록 하기 위해서다.
+그래서 책임을 **7개 영역**으로 나누고, 영역별 판단 기준은 **컨텍스트 문서**에, 반복 운영 절차는 **Skill**에 고정했다. AI가 각 영역에서 <u>해야 할 일과 하지 말아야 할 일</u>을 일관되게 판단하도록 하기 위해서다.
 
 ## 7영역 구조
 
-본 플랫폼은 7개 영역으로 관심사를 분리한다. 각 영역은 AI가 벤치마크를 지휘할 때 개입하는 독립적인 책임 범위를 정의한다.
+본 플랫폼은 **7개 영역**으로 관심사를 분리한다. 각 영역은 AI가 벤치마크를 지휘할 때 개입하는 독립적인 책임 범위를 정의한다.
 
 | # | 영역 | 책임 |
 |---|------|------|
@@ -64,10 +63,9 @@ AI는 마련된 컨텍스트 문서와 Skill을 바탕으로 manifest 작성, Ga
 
 → [영역 전체 가이드 및 AI 작업 분담](areas/README.md)
 
-
 ## 핵심 파이프라인
 
-이 플랫폼은 manifest를 기준으로 외부 repo, stack 정의, VM 실행 환경, 결과 산출물을 한 흐름으로 묶는다.
+이 플랫폼은 **manifest를 기준**으로 외부 repo, stack 정의, VM 실행 환경, 결과 산출물을 <u>한 흐름</u>으로 묶는다.
 
 ```
 사용자 자연어 요청
@@ -96,11 +94,11 @@ AI는 마련된 컨텍스트 문서와 Skill을 바탕으로 manifest 작성, Ga
 | VM 배포 | 이미지 빌드, stack deploy, 서비스 health | VM Docker Swarm stack |
 | 실행·분석 | iteration 진행, Gatling 결과, Prometheus metric, 요약 | `bench/results/<manifest_id>/<run_id>/SUMMARY.md` |
 
-외부 repo 변경은 manifest별 `bench/<manifest_id>` 계열 브랜치에 격리한다. 벤치가 끝나면 각 repo는 기준 브랜치로 되돌리고, 벤치 브랜치는 재현성과 사후 검토를 위해 보존한다.
+외부 repo 변경은 manifest별 `bench/<manifest_id>` 계열 브랜치에 **격리**한다. 벤치가 끝나면 각 repo는 기준 브랜치로 되돌리고, 벤치 브랜치는 **재현성**과 **사후 검토**를 위해 보존한다.
 
 ## 빠른 시작
 
-Codex에서는 `$realticket-bench-operator`, Claude Code에서는 project skill `realticket-bench-operator`가 운영 entrypoint다. Skill은 반복 운영 절차를 제공하고, schema·Lock·외부 repo 계약의 단일 진실은 `areas/*/README.md`다.
+Codex에서는 **`$realticket-bench-operator`**, Claude Code에서는 **project skill `realticket-bench-operator`**가 운영 entrypoint다. Skill은 반복 운영 절차를 제공하고, schema·Lock·외부 repo 계약의 <u>단일 진실</u>은 `areas/*/README.md`다.
 
 ### 1단계 — AI skill 준비
 
