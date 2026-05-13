@@ -121,6 +121,12 @@ python areas/03-analysis/analyze/interpret_summary.py bench/results/<manifest_id
 bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml
 ```
 
+Windows PowerShell에서 `bash`가 직접 resolve되지 않으면 다음처럼 Git Bash shim을 통해 실행한다.
+
+```powershell
+sh -lc 'bash areas/02-orchestration/run.sh bench/manifests/<manifest>.yaml'
+```
+
 ## 7영역 구조
 
 본 플랫폼은 7개 영역으로 관심사를 분리한다. 각 영역은 AI가 벤치마크를 지휘할 때 개입하는 독립적인 책임 범위를 정의한다.
